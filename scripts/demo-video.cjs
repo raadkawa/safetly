@@ -1,5 +1,5 @@
 // Tar opp en demovideo av Safetly (demomodus) med norsk stemme og tekst.
-// Lager to filer: safetly-demo-mobil.mp4 (1080×1920, høykant) og safetly-demo-pc.mp4 (1920×1080, bredformat).
+// Lager to filer: safetly-demo-mobil.mp4 (1080×2340, telefonskjerm) og safetly-demo-pc.mp4 (1920×1080, bredformat).
 //
 // Kjør: PIPER_VOICE=/sti/til/no_NO-talesyntese-medium.onnx node scripts/demo-video.cjs [utmappe]
 // Krever Playwright med Chromium, ffmpeg og (for stemme) `pip install piper-tts` + en norsk Piper-stemme:
@@ -17,7 +17,7 @@ fs.mkdirSync(TMP, { recursive: true });
 const VOICE = process.env.PIPER_VOICE;
 // Appen tegnes som en 390 px bred telefon, forstørret med CSS-zoom til 1080×1920 (9:16).
 // (Playwright skalerer ikke opptaket etter deviceScaleFactor, så vi zoomer i stedet.)
-const OUT_W = 1080, OUT_H = 1920, W = 390, Z = OUT_W / W;
+const OUT_W = 1080, OUT_H = 2340, W = 390, Z = OUT_W / W; // 19,5:9 som nyere telefoner
 
 // ------------------------------------------------------------------ manus
 const NARR = {
