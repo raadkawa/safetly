@@ -1,0 +1,115 @@
+name: iPhone (TestFlight)
+
+# Bygger iPhone-appen på en Mac hos GitHub og laster den opp til TestFlight.
+# Krever disse secrets (Settings → Secrets and variables → Actions):
+#   APPLE_TEAM_ID       Team ID fra developer.apple.com/account
+#   APPSTORE_KEY_ID     Key ID for API-nøkkelen i App Store Connect (rolle Admin)
+#   APPSTORE_ISSUER_ID  Issuer ID fra samme side
+#   APPSTORE_KEY_P8     hele innholdet i AuthKey_XXXX.p8-fila
+# Appen må finnes i App Store Connect med Bundle ID no.safetly.app.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.c.outputs.ready }}
+    steps:
+      - id: c
+        env:
+          TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
+          ISSUER: ${{ secrets.APPSTORE_ISSUER_ID }}
+          P8: ${{ secrets.APPSTORE_KEY_P8 }}
+        run: |
+          if [ -n "$TEAM" ] && [ -n "$KEY_ID" ] && [ -n "$ISSUER" ] && [ -n "$P8" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::iPhone-bygget hoppes over: legg inn APPLE_TEAM_ID, APPSTORE_KEY_ID, APPSTORE_ISSUER_ID og APPSTORE_KEY_P8 som secrets."
+          fi
+
+  testflight:
+    needs: check
+    if: needs.check.outputs.ready == 'true'
+    runs-on: macos-15
+    env:
+      TEAM: ${{ secrets.APPLE_TEAM_ID }}
+      KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
+      ISSUER: ${{ secrets.APPSTORE_ISSUER_ID }}
+      BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Installer og bygg nettappen
+        run: |
+          npm ci
+          npm run build
+
+      - name: Lag iOS-prosjekt
+        run: |
+          if [ ! -d ios ]; then npx cap add ios; fi
+          npx capacitor-assets generate --ios \
+            --iconBackgroundColor '#1C1A16' --iconBackgroundColorDark '#1C1A16' \
+            --splashBackgroundColor '#F6F0E4' --splashBackgroundColorDark '#16140F'
+          npx cap sync ios
+          PLIST=ios/App/App/Info.plist
+          /usr/libexec/PlistBuddy -c "Delete :ITSAppUsesNonExemptEncryption" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Safetly" "$PLIST" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string Safetly" "$PLIST"
+
+      - name: Legg inn API-nøkkel
+        env:
+          P8: ${{ secrets.APPSTORE_KEY_P8 }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/keys"
+          printf '%s\n' "$P8" > "$RUNNER_TEMP/keys/AuthKey_$KEY_ID.p8"
+          echo "KEY_PATH=$RUNNER_TEMP/keys/AuthKey_$KEY_ID.p8" >> "$GITHUB_ENV"
+
+      - name: Bygg (archive)
+        run: |
+          if [ -d ios/App/App.xcworkspace ]; then SRC=(-workspace ios/App/App.xcworkspace); else SRC=(-project ios/App/App.xcodeproj); fi
+          xcodebuild "${SRC[@]}" -scheme App -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Safetly.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$KEY_PATH" -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER" \
+            DEVELOPMENT_TEAM="$TEAM" CODE_SIGN_STYLE=Automatic \
+            PRODUCT_BUNDLE_IDENTIFIER=no.safetly.app \
+            MARKETING_VERSION=1.0.0 CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            archive | tail -n 40
+
+      - name: Last opp til TestFlight
+        run: |
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>$TEAM</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>uploadSymbols</key><true/>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict></plist>
+          EOF
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Safetly.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$KEY_PATH" -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER"
+          echo "::notice::Bygg $BUILD_NUMBER er lastet opp. Det dukker opp i TestFlight etter 5–30 minutter."
+
+      - name: Rydd bort nøkkel
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/keys"
