@@ -67,7 +67,10 @@
     x: (s) => svg('<path d="M6 6l12 12M18 6L6 18"/>', { s: s || 16, w: 2.4 }),
     download: () => svg('<path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/>', { s: 20, w: 2.2 }),
     alert: () => svg('<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5v.01"/>', { s: 22, w: 2.2 }),
-    pen: () => svg('<path d="M4 20h4L19 9l-4-4L4 16z"/>', { s: 20 })
+    pen: () => svg('<path d="M4 20h4L19 9l-4-4L4 16z"/>', { s: 20 }),
+    chat: (s) => svg('<path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4.5 3.5V17h0A2.5 2.5 0 0 1 4 14.5z"/>', { s: s || 22 }),
+    send: () => svg('<path d="M5 12h13M13 6l6 6-6 6"/>', { s: 22, w: 2.4 }),
+    megaphone: (s) => svg('<path d="M4 10v4a1 1 0 0 0 1 1h2l6 4V5L7 9H5a1 1 0 0 0-1 1zM17 9a4 4 0 0 1 0 6"/>', { s: s || 22 })
   };
 
   // ------------------------------------------------------------------ datalag: Supabase
@@ -122,7 +125,15 @@
         const rows = ok(await sb.from('settings').update(Object.assign({ updated_at: new Date().toISOString() }, v)).eq('id', 1).select('id'));
         if (!rows || !rows.length) throw new Error('permission denied');
       },
-      async setRole(id, role) { ok(await sb.from('profiles').update({ role }).eq('id', id)); }
+      async setRole(id, role) { ok(await sb.from('profiles').update({ role }).eq('id', id)); },
+      async messages() { return ok(await sb.from('messages').select('id,sender_id,recipient_id,body,created_at').order('created_at', { ascending: false }).limit(500)).reverse(); },
+      async sendMessage(recipientId, body) { return ok(await sb.from('messages').insert({ sender_id: userId, recipient_id: recipientId, body }).select('id,sender_id,recipient_id,body,created_at').single()); },
+      async reads() { return ok(await sb.from('chat_reads').select('thread,last_read_at')); },
+      async markRead(thread) { ok(await sb.from('chat_reads').upsert({ user_id: userId, thread, last_read_at: new Date().toISOString() })); },
+      onMessage(cb) {
+        const ch = sb.channel('safetly-meldinger').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (p) => cb(p.new)).subscribe();
+        return () => sb.removeChannel(ch);
+      }
     };
   }
 
@@ -169,7 +180,12 @@
           { id: 'ev2', created_by: 'demo-0', title: 'Foreldremøte: Trygg jul', event_date: iso(addDays(t, 7)), event_time: '19:00', place: 'Aktivitetshuset', description: 'Vi planlegger vakter i juleferien og deler erfaringer fra høsten.' },
           { id: 'ev3', created_by: 'demo-1', title: 'Natteravnkurs for nye', event_date: iso(addDays(t, 9)), event_time: '12:00', place: 'Biblioteket', description: 'Kort innføring i hvordan en vakt går, og hva du gjør hvis noe skjer.' }
         ],
-        attendees: [['ev1', 'demo-0'], ['ev1', 'demo-3'], ['ev1', 'demo-4'], ['ev2', 'demo-1'], ['ev3', 'demo-5']].map(([e, u]) => ({ event_id: e, user_id: u }))
+        attendees: [['ev1', 'demo-0'], ['ev1', 'demo-3'], ['ev1', 'demo-4'], ['ev2', 'demo-1'], ['ev3', 'demo-5']].map(([e, u]) => ({ event_id: e, user_id: u })),
+        messages: [
+          { id: uid(), sender_id: 'demo-0', recipient_id: null, body: 'Hei alle sammen! Fint at så mange har lastet ned Safetly. Husk refleksvest på vakt nå som det er mørkt.', created_at: ago(50) },
+          { id: uid(), sender_id: 'demo-0', recipient_id: null, body: 'Fredag er det skoleball. Vi trenger tre voksne på begge vaktene, så book gjerne en ekstra.', created_at: ago(6) }
+        ],
+        reads: {}
       };
     }
     const me = () => db.users.find((u) => u.id === db.session);
@@ -187,7 +203,9 @@
         if (password.length < 6) throw new Error('Password should be at least 6 characters');
         const first = !db.users.some((u) => !u.seed);
         const u = { id: uid(), email, password, full_name: name, phone, role: first ? 'koordinator' : 'forelder', created_at: new Date().toISOString() };
-        db.users.push(u); db.session = u.id; save(); emit('SIGNED_IN');
+        db.users.push(u); db.session = u.id;
+        (db.messages = db.messages || []).push({ id: uid(), sender_id: 'demo-0', recipient_id: u.id, body: `Hei ${name.split(' ')[0] || ''}, og velkommen! Si fra hvis du lurer på noe om vaktene.`.replace(' ,', ','), created_at: new Date().toISOString() });
+        save(); emit('SIGNED_IN');
         return { needsConfirm: false };
       },
       async signIn(email, password) {
@@ -201,6 +219,16 @@
       async profiles() { return db.users.map((u) => ({ id: u.id, full_name: u.full_name, role: u.role, created_at: u.created_at })); },
       async phones() { const m = need(); return db.users.filter((u) => m.role === 'koordinator' || u.id === m.id).map((u) => ({ user_id: u.id, phone: u.phone || '' })); },
       async contacts() { need(); return db.users.filter((u) => u.role === 'koordinator').map((u) => ({ full_name: u.full_name, phone: u.phone || '' })); },
+      async messages() { const m = need(); return (db.messages || []).filter((x) => !x.recipient_id || x.sender_id === m.id || x.recipient_id === m.id).sort((a, b) => a.created_at.localeCompare(b.created_at)); },
+      async sendMessage(recipientId, body) {
+        const m = need();
+        if (!recipientId && m.role !== 'koordinator') throw new Error('Bare koordinatorer kan skrive til alle');
+        const msg = { id: uid(), sender_id: m.id, recipient_id: recipientId, body, created_at: new Date().toISOString() };
+        (db.messages = db.messages || []).push(msg); save(); return msg;
+      },
+      async reads() { const m = need(); const r = (db.reads || {})[m.id] || {}; return Object.keys(r).map((t) => ({ thread: t, last_read_at: r[t] })); },
+      async markRead(thread) { const m = need(); db.reads = db.reads || {}; (db.reads[m.id] = db.reads[m.id] || {})[thread] = new Date().toISOString(); save(); },
+      onMessage() { return () => {}; },
       async bookings(from, to) { need(); return db.bookings.filter((b) => b.shift_date >= from && b.shift_date <= to); },
       async myBookings() { const m = need(); return db.bookings.filter((b) => b.user_id === m.id); },
       async book(rows) {
@@ -265,7 +293,8 @@
     cal: { y: today().getFullYear(), m: today().getMonth() }, calSel: iso(today()),
     eventForm: false, newsForm: false, meetingForm: false, settings: null, kontorWeek: weekStart(today()),
     theme: prefs.theme || 'auto', big: !!prefs.big,
-    busy: false, lastRoute: null, backRoute: '#/vakter'
+    busy: false, lastRoute: null, backRoute: '#/vakter',
+    messages: [], reads: {}, chatBottom: false
   };
   function savePrefs() { try { localStorage.setItem('safetly-prefs', JSON.stringify({ theme: S.theme, big: S.big })); } catch (e) { /* tom */ } }
   function applyPrefs() {
@@ -300,6 +329,10 @@
     try { S.settings = await api.settings(); } catch (e) { S.settings = null; } // før settings-tabellen finnes
     S.contacts = contacts || []; S.bookings = bookings; S.myBookings = mine; S.news = news; S.reports = reports;
     S.myReports = myReports; S.events = events; S.attendees = attendees;
+    try {
+      const [msgs, reads] = await Promise.all([api.messages(), api.reads()]);
+      S.messages = msgs; S.reads = {}; reads.forEach((r) => { S.reads[r.thread] = r.last_read_at; });
+    } catch (e) { S.messages = []; S.reads = {}; } // før meldingstabellene finnes
     S.me = S.profiles[S.user.id] || null;
     S.loaded = true; S.loadError = S.me ? null : 'Fant ikke profilen din. Kjør supabase/schema.sql og prøv igjen.';
   }
@@ -349,7 +382,9 @@
     ['vakter', 'Vakter', I.shield], ['kalender', 'Kalender', I.cal], ['nyheter', 'Nyheter', I.news],
     ['arrangement', 'Arrangem.', I.people, 'Arrangement'], ['info', 'Info', I.info]
   ];
-  const TITLES = { vakter: 'Vakter', kalender: 'Kalender', nyheter: 'Ukas nyheter', arrangement: 'Arrangement', info: 'Info', kontor: 'Kontor', nodhjelp: 'Nødhjelp' };
+  const TITLES = { chat: 'Meldinger', vakter: 'Vakter', kalender: 'Kalender', nyheter: 'Ukas nyheter', arrangement: 'Arrangement', info: 'Info', kontor: 'Kontor', nodhjelp: 'Nødhjelp' };
+  function routeParam() { return location.hash.replace(/^#\/?/, '').split('/')[1] || ''; }
+  function routeKey() { const r = route(); return r === 'chat' ? 'chat/' + routeParam() : r; }
   function route() {
     const h = location.hash.replace(/^#\/?/, '');
     const name = h.split('/')[0];
@@ -358,9 +393,14 @@
 
   // ------------------------------------------------------------------ felles byggeklosser
   function header() {
+    const n = unreadTotal();
+    const inChat = route() === 'chat';
     return `<header class="top">
       <a class="brand" href="#/vakter" aria-label="Safetly, til Vakter"><span class="logo">${I.moon()}</span><span class="brand-name" aria-hidden="true">Safetly</span></a>
-      <a class="sos" href="#/nodhjelp">${I.phone()}Nødhjelp</a>
+      <div class="row" style="gap:.5rem">
+        <a class="icon-btn chat-btn" href="#/chat"${inChat ? ' aria-current="page"' : ''} aria-label="Meldinger${n ? `, ${n} ulest${n === 1 ? '' : 'e'}` : ''}">${I.chat()}${n ? `<span class="count" aria-hidden="true">${n > 99 ? '99+' : n}</span>` : ''}</a>
+        <a class="sos" href="#/nodhjelp">${I.phone()}Nødhjelp</a>
+      </div>
     </header>${api.mode === 'demo' ? '<p class="demo-banner">Demomodus: data lagres bare på denne enheten. Legg inn Supabase-nøkler i config.js for å dele med nabolaget.</p>' : ''}`;
   }
   function nav(current) {
@@ -434,7 +474,8 @@
         <h2 id="neste" class="eyebrow">Din neste vakt</h2>
         <div class="stack-s"><p class="big-num">${SLOTS[next.slot].start}–${SLOTS[next.slot].end}</p><p style="font-weight:600;font-size:1.0625rem">${isToday ? 'I kveld · ' : ''}${cap(fmtDay(next.shift_date))}</p></div>
         <p class="muted">${partners.length ? `Du går sammen med <b style="color:var(--ink)">${esc(partners.join(' og '))}</b>` : '<b style="color:var(--ink)">Ingen andre er påmeldt ennå.</b>'} · Oppmøte: ${esc(meeting().name || 'se Info')}</p>
-        <div class="wrap-row"><a class="pill sm" href="#/info">Slik går en vakt</a><button type="button" class="pill ghost sm" data-act="unbook" data-id="${next.id}" data-label="${esc(shiftLabel(next.shift_date, next.slot))}">Avbook</button></div>
+        <div class="wrap-row"><a class="pill sm" href="#/info">Slik går en vakt</a><button type="button" class="pill ghost sm" data-act="unbook" data-id="${next.id}" data-label="${esc(shiftLabel(next.shift_date, next.slot))}">Avbook</button>
+        ${shiftPeople(next.shift_date, next.slot).filter((b) => b.user_id !== S.user.id).map((b) => `<a class="pill ghost sm" href="#/chat/${b.user_id}">${I.chat(18)}Skriv til ${esc(shortName((S.profiles[b.user_id] || {}).full_name).split(' ')[0])}</a>`).join('')}</div>
       </section>`;
     }
     if (pending.length) {
@@ -702,6 +743,7 @@
       const ph = S.phones[p.id];
       html += `<div class="list-row"><div class="grow stack-s" style="gap:.125rem"><b>${esc(p.full_name || 'Uten navn')}${p.id === S.user.id ? ' (deg)' : ''}</b>
         ${ph ? `<a class="small muted" href="${esc(telHref(ph))}">${esc(ph)}</a>` : '<span class="small muted">Ingen telefon</span>'}</div>
+        ${p.id !== S.user.id ? `<a class="icon-btn" href="#/chat/${p.id}" aria-label="Skriv melding til ${esc(p.full_name)}">${I.chat(20)}</a>` : ''}
         <label class="sr-only" for="role-${p.id}">Rolle for ${esc(p.full_name)}</label>
         <select id="role-${p.id}" class="input" style="width:auto;min-height:2.75rem;border-radius:999px;font-weight:600;font-size:.875rem" data-change="role" data-id="${p.id}">
           <option value="forelder"${p.role === 'forelder' ? ' selected' : ''}>Forelder</option><option value="koordinator"${p.role === 'koordinator' ? ' selected' : ''}>Koordinator</option></select></div>`;
@@ -773,12 +815,128 @@
       <button type="submit" class="pill">Lagre passord</button></form></main></div>`;
   }
 
+
+  // ------------------------------------------------------------------ Meldinger
+  const threadOf = (m) => (!m.recipient_id ? 'alle' : (m.sender_id === S.user.id ? m.recipient_id : m.sender_id));
+  // Nye brukere ser siste ukes meldinger som uleste.
+  function readBaseline(thread) {
+    if (S.reads[thread]) return S.reads[thread];
+    const joined = Date.parse((S.me && S.me.created_at) || '') || 0;
+    return new Date(joined - 7 * 86400000).toISOString();
+  }
+  function unreadIn(thread) { const base = Date.parse(readBaseline(thread)) || 0; return S.messages.filter((m) => threadOf(m) === thread && m.sender_id !== S.user.id && Date.parse(m.created_at) > base).length; }
+  function unreadTotal() {
+    if (!S.user || !S.loaded) return 0;
+    const seen = {}; let n = 0;
+    S.messages.forEach((m) => { const t = threadOf(m); if (!seen[t]) { seen[t] = 1; n += unreadIn(t); } });
+    return n;
+  }
+  function fmtChatTime(ts) {
+    const d = new Date(ts); const t = today(); const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const diff = Math.round((t - day) / 86400000);
+    if (diff === 0) return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    if (diff === 1) return 'I går';
+    if (diff < 7) return cap(DAYS[dow(d)]);
+    return `${d.getDate()}.${d.getMonth() + 1}.`;
+  }
+  function dayLabel(ts) {
+    const d = new Date(ts); const t = today(); const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const diff = Math.round((t - day) / 86400000);
+    return diff === 0 ? 'I dag' : diff === 1 ? 'I går' : cap(fmtDay(iso(day)));
+  }
+  function chatAvatar(thread, big) {
+    const cls = big ? 'chat-av big' : 'chat-av';
+    if (thread === 'alle') return `<span class="${cls} alle" aria-hidden="true">${I.megaphone(big ? 24 : 22)}</span>`;
+    const p = S.profiles[thread] || {};
+    return `<span class="${cls}${p.role === 'koordinator' ? ' koord' : ''}" aria-hidden="true">${esc(initials(p.full_name))}</span>`;
+  }
+  function threadName(thread) { return thread === 'alle' ? 'Til alle' : ((S.profiles[thread] || {}).full_name || 'Ukjent'); }
+
+  function viewChat() {
+    const param = routeParam();
+    if (param === 'ny') return viewChatNew();
+    if (param) return viewThread(param);
+    const last = {};
+    S.messages.forEach((m) => { last[threadOf(m)] = m; });
+    const threads = Object.keys(last).filter((t) => t !== 'alle' && S.profiles[t]).sort((a, b) => Date.parse(last[b].created_at) - Date.parse(last[a].created_at));
+    const row = (t) => {
+      const m = last[t]; const n = unreadIn(t);
+      const who = m ? (m.sender_id === S.user.id ? 'Du: ' : (t === 'alle' ? shortName((S.profiles[m.sender_id] || {}).full_name) + ': ' : '')) : '';
+      const preview = m ? who + m.body : (t === 'alle' ? 'Beskjeder fra koordinatorene til alle' : '');
+      return `<li><a class="chat-row${t === 'alle' ? ' alle' : ''}${n ? ' unread' : ''}" href="#/chat/${t}">
+        ${chatAvatar(t)}
+        <span class="grow stack-s" style="gap:.125rem"><span class="between"><b>${esc(threadName(t))}</b>${m ? `<span class="small muted">${esc(fmtChatTime(m.created_at))}</span>` : ''}</span>
+        <span class="between"><span class="preview">${esc(preview)}</span>${n ? `<span class="count-pill">${n}<span class="sr-only"> uleste</span></span>` : ''}</span></span></a></li>`;
+    };
+    return `<div class="between" style="align-items:flex-end"><div class="page-head"><h1 tabindex="-1">Meldinger</h1><p class="muted">Skriv til andre i nabolaget</p></div>
+        <a class="pill sm" href="#/chat/ny">${I.plus()}Ny melding</a></div>
+      <ul class="chat-list">${row('alle')}${threads.map(row).join('')}</ul>
+      ${threads.length ? '' : '<p class="empty">Ingen samtaler ennå. Trykk «Ny melding» for å skrive til noen.</p>'}
+      <p class="small muted">Meldinger til én person ser bare dere to. Ikke del sensitive opplysninger om barn.</p>`;
+  }
+  function viewChatNew() {
+    const people = Object.values(S.profiles).filter((p) => p.id !== S.user.id).sort((a, b) => (a.full_name || '').localeCompare(b.full_name || '', 'nb'));
+    return `<div class="page-head"><a href="#/chat" class="row back-link">${I.left()}Meldinger</a><h1 tabindex="-1">Ny melding</h1></div>
+      <label class="field">Søk etter navn<input id="chat-search" type="search" autocomplete="off" placeholder="Skriv et navn"></label>
+      <ul class="chat-list" id="pick-list">${isCoord() ? `<li data-name="til alle"><a class="chat-row alle" href="#/chat/alle">${chatAvatar('alle')}<span class="grow stack-s" style="gap:.125rem"><b>Til alle</b><span class="preview">Beskjed til hele nabolaget</span></span></a></li>` : ''}
+      ${people.map((p) => `<li data-name="${esc((p.full_name || '').toLowerCase())}"><a class="chat-row" href="#/chat/${p.id}">${chatAvatar(p.id)}<span class="grow stack-s" style="gap:.125rem"><b>${esc(p.full_name || 'Uten navn')}</b><span class="preview">${p.role === 'koordinator' ? 'Koordinator' : 'Forelder'}</span></span></a></li>`).join('')}</ul>
+      <p class="empty" id="pick-empty" hidden>Fant ingen med det navnet.</p>`;
+  }
+  function viewThread(thread) {
+    if (thread !== 'alle' && !S.profiles[thread]) return `<a href="#/chat" class="row back-link">${I.left()}Meldinger</a><p class="empty">Fant ikke denne personen.</p>`;
+    const msgs = S.messages.filter((m) => threadOf(m) === thread);
+    if (unreadIn(thread)) { S.reads[thread] = new Date().toISOString(); api.markRead(thread).catch(() => {}); }
+    const p = S.profiles[thread] || {};
+    const sub = thread === 'alle' ? 'Koordinatorene skriver, alle leser' : (p.role === 'koordinator' ? 'Koordinator' : 'Forelder');
+    let html = `<div class="chat-head">
+      <a href="#/chat" class="icon-btn plain" aria-label="Tilbake til meldinger">${I.left()}</a>${chatAvatar(thread, true)}
+      <div class="grow"><h1 tabindex="-1" style="font-size:1.25rem">${esc(threadName(thread))}</h1><p class="small muted">${esc(sub)}</p></div></div>
+      <ol class="bubbles" aria-label="Meldinger" aria-live="polite">`;
+    let lastDay = '';
+    msgs.forEach((m, i) => {
+      const dl = dayLabel(m.created_at);
+      if (dl !== lastDay) { html += `<li class="day-sep"><span>${esc(dl)}</span></li>`; lastDay = dl; }
+      const mine = m.sender_id === S.user.id;
+      const prev = msgs[i - 1];
+      const showName = thread === 'alle' && !mine && (!prev || prev.sender_id !== m.sender_id || dayLabel(prev.created_at) !== dl);
+      const d = new Date(m.created_at);
+      html += `<li class="bubble-row ${mine ? 'mine' : 'theirs'}${thread === 'alle' && !mine ? ' alle' : ''}">
+        ${showName ? `<span class="small muted bubble-name">${esc((S.profiles[m.sender_id] || {}).full_name || 'Koordinator')}</span>` : ''}
+        <div class="bubble"><span class="sr-only">${mine ? 'Du' : esc(nameOf(m.sender_id))} skrev: </span><p class="pre">${esc(m.body)}</p></div>
+        <span class="bubble-time">${pad(d.getHours())}:${pad(d.getMinutes())}</span></li>`;
+    });
+    html += '</ol>';
+    if (!msgs.length) html += `<p class="empty">${thread === 'alle' ? 'Ingen beskjeder til alle ennå.' : 'Ingen meldinger ennå. Si hei!'}</p>`;
+    if (thread === 'alle' && !isCoord()) {
+      html += `<div class="composer readonly"><p class="small">Bare koordinatorene kan skrive her. Vil du svare, send en melding til én koordinator.</p>
+        <a class="pill sm self-start" href="#/chat/ny">Skriv til en koordinator</a></div>`;
+    } else {
+      html += `<form class="composer" data-form="chat" data-thread="${esc(thread)}">
+        <label class="sr-only" for="chat-input-${esc(thread)}">${thread === 'alle' ? 'Beskjed til alle' : 'Melding til ' + esc(threadName(thread))}</label>
+        <textarea id="chat-input-${esc(thread)}" name="body" rows="1" maxlength="1000" required data-autogrow placeholder="${thread === 'alle' ? 'Skriv en beskjed til alle …' : 'Skriv en melding …'}" aria-describedby="chat-hint"></textarea>
+        <button type="submit" class="send-btn" aria-label="Send">${I.send()}</button>
+        <p id="chat-hint" class="chat-hint">Ikke del sensitive opplysninger om barn.</p>
+      </form>`;
+    }
+    return html;
+  }
+  function onIncoming(m) {
+    if (!S.user || S.messages.some((x) => x.id === m.id)) return;
+    S.messages.push(m);
+    const t = threadOf(m);
+    const open = route() === 'chat' && routeParam() === t;
+    if (open) S.chatBottom = true;
+    else if (m.sender_id !== S.user.id) toast(`Ny melding fra ${t === 'alle' ? 'koordinator, til alle' : nameOf(m.sender_id)}`);
+    render();
+  }
+
   // ------------------------------------------------------------------ tegning
-  const VIEWS = { vakter: viewVakter, kalender: viewKalender, nyheter: viewNyheter, arrangement: viewArrangement, info: viewInfo, kontor: viewKontor };
+  const VIEWS = { chat: viewChat, vakter: viewVakter, kalender: viewKalender, nyheter: viewNyheter, arrangement: viewArrangement, info: viewInfo, kontor: viewKontor };
   function render() {
     const app = $('#app');
     const r = route();
-    const routeChanged = r !== S.lastRoute;
+    const key = routeKey();
+    const routeChanged = key !== S.lastRoute;
     // Ta vare på det brukeren har skrevet og hvor fokus er.
     const active = document.activeElement && document.activeElement.id;
     const kept = {};
@@ -794,7 +952,10 @@
     else if (!S.user) html = viewAuth();
     else if (!S.loaded) html = `<div class="wrap">${header()}<main id="innhold" tabindex="-1"><p class="loading">Henter vakter …</p></main></div>`;
     else if (S.loadError) html = `<div class="wrap">${header()}<main id="innhold" tabindex="-1"><h1 tabindex="-1">Noe gikk galt</h1><p>${esc(S.loadError)}</p><button type="button" class="pill self-start" data-act="retry">Prøv igjen</button><button type="button" class="pill ghost self-start" data-act="logout">Logg ut</button></main></div>`;
-    else html = `<div class="wrap">${header()}<main id="innhold" tabindex="-1">${VIEWS[r]()}</main>${nav(r)}</div>`;
+    else {
+      const inThread = r === 'chat' && routeParam() && routeParam() !== 'ny';
+      html = `<div class="wrap">${header()}<main id="innhold" tabindex="-1"${inThread ? ' class="chat-main"' : ''}>${VIEWS[r]()}</main>${inThread ? '' : nav(r)}</div>`;
+    }
     app.innerHTML = html;
     if (!routeChanged) {
       Object.keys(kept).forEach((id) => {
@@ -805,13 +966,18 @@
       if (active) { const el = document.getElementById(active); if (el) el.focus({ preventScroll: true }); }
       window.scrollTo(0, scrollY);
     } else {
-      S.lastRoute = r;
+      S.lastRoute = key;
+      if (r === 'chat') S.chatBottom = true;
       document.title = (TITLES[r] && S.user ? TITLES[r] + ' – ' : '') + 'Safetly';
       window.scrollTo(0, 0);
       const h1 = $('#app h1');
       if (h1 && S.ready && document.readyState === 'complete' && S.navigated) h1.focus({ preventScroll: true });
     }
+    document.querySelectorAll('[data-autogrow]').forEach(autogrow);
+    if (S.chatBottom && r === 'chat' && routeParam() && routeParam() !== 'ny') { window.scrollTo(0, document.documentElement.scrollHeight); }
+    S.chatBottom = false;
   }
+  function autogrow(el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight + 4, 160) + 'px'; }
   function updateCounters() {
     document.querySelectorAll('[data-count]').forEach((s) => { const t = document.getElementById(s.dataset.count); if (t) s.textContent = t.value.length; });
   }
@@ -899,6 +1065,15 @@
       await api.addEvent({ title: f.title.value.trim(), event_date: f.date.value, event_time: f.time.value, place: f.place.value.trim(), description: f.description.value.trim() });
       f.reset(); S.eventForm = false; await reloadEvents(); toast('Arrangementet er opprettet.');
     },
+    async chat(f) {
+      const body = f.body.value.trim(); if (!body) return;
+      const thread = f.dataset.thread;
+      const msg = await api.sendMessage(thread === 'alle' ? null : thread, body);
+      f.body.value = '';
+      if (msg && !S.messages.some((x) => x.id === msg.id)) S.messages.push(msg);
+      S.reads[thread] = new Date().toISOString(); api.markRead(thread).catch(() => {});
+      S.chatBottom = true;
+    },
     async meeting(f) {
       await api.updateSettings({ meeting_name: f.mname.value.trim(), meeting_address: f.maddress.value.trim(), meeting_note: f.mnote.value.trim() });
       S.settings = await api.settings(); S.meetingForm = false;
@@ -972,7 +1147,23 @@
     if (el.dataset && el.dataset.act && el.tagName === 'INPUT' && actions[el.dataset.act]) actions[el.dataset.act](el, ev);
     if (el.dataset && el.dataset.change && changes[el.dataset.change]) changes[el.dataset.change](el, ev);
   });
-  document.addEventListener('input', (ev) => { if (ev.target.hasAttribute && ev.target.hasAttribute('data-counter')) updateCounters(); });
+  document.addEventListener('input', (ev) => {
+    const t = ev.target;
+    if (!t.hasAttribute) return;
+    if (t.hasAttribute('data-counter')) updateCounters();
+    if (t.hasAttribute('data-autogrow')) autogrow(t);
+    if (t.id === 'chat-search') {
+      const q = t.value.trim().toLowerCase(); let shown = 0;
+      document.querySelectorAll('#pick-list li').forEach((li) => { const hit = !q || li.dataset.name.includes(q); li.hidden = !hit; if (hit) shown++; });
+      const e = $('#pick-empty'); if (e) e.hidden = shown > 0;
+    }
+  });
+  // Ctrl/Cmd + Enter sender meldingen.
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey) && ev.target.hasAttribute && ev.target.hasAttribute('data-autogrow')) {
+      ev.preventDefault(); const f = ev.target.closest('form'); if (f) f.requestSubmit();
+    }
+  });
   document.addEventListener('submit', (ev) => {
     const f = ev.target.closest('form[data-form]');
     if (!f) return;
@@ -996,10 +1187,22 @@
   });
 
   // ------------------------------------------------------------------ oppstart
+  let stopLive = null; let pollTimer = null;
   async function startSession() {
     S.loaded = false; render();
     try { await loadAll(); } catch (e) { console.error(e); S.loaded = true; S.loadError = errText(e); }
     render();
+    if (stopLive) stopLive();
+    try { stopLive = api.onMessage(onIncoming); } catch (e) { stopLive = null; }
+    clearInterval(pollTimer);
+    pollTimer = setInterval(async () => {
+      if (!S.user || !S.loaded || document.visibilityState !== 'visible' || S.busy) return;
+      try {
+        const msgs = await api.messages();
+        const fresh = msgs.filter((m) => !S.messages.some((x) => x.id === m.id));
+        if (fresh.length || msgs.length !== S.messages.length) { S.messages = msgs; fresh.forEach((m) => { if (route() === 'chat' && routeParam() === threadOf(m)) S.chatBottom = true; }); render(); }
+      } catch (e) { /* prøver igjen */ }
+    }, 20000);
   }
   async function boot() {
     applyPrefs();

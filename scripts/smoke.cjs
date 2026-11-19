@@ -84,6 +84,34 @@ fs.mkdirSync(OUT, { recursive: true });
     await page.getByRole('button', { name: 'Legg ut' }).click();
     await page.getByRole('heading', { name: 'Velkommen til Safetly' }).waitFor();
     step('koordinator la ut nyhet');
+
+    // Meldinger
+    const chatBtn = page.getByRole('link', { name: /^Meldinger/ });
+    if (!/ulest/.test(await chatBtn.getAttribute('aria-label'))) throw new Error('mangler merke for uleste meldinger');
+    await chatBtn.click();
+    await page.getByRole('heading', { name: 'Meldinger' }).waitFor();
+    await shot('06a-chat-liste');
+    await page.getByRole('link', { name: /Kari Nilsen/ }).click();
+    await page.getByText(/velkommen/).waitFor();
+    await page.getByLabel('Melding til Kari Nilsen').fill('Takk! Jeg tar gjerne fredag.');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await page.locator('.bubble-row.mine', { hasText: 'Takk! Jeg tar gjerne fredag.' }).waitFor();
+    await shot('06b-chat-samtale');
+    await page.getByRole('link', { name: 'Tilbake til meldinger' }).click();
+    if (await page.locator('.chat-row', { hasText: 'Kari Nilsen' }).locator('.count-pill').count()) throw new Error('samtalen med Kari er fortsatt ulest etter lesing');
+    await page.getByRole('link', { name: /Til alle/ }).click();
+    await page.getByLabel('Beskjed til alle').fill('Hei alle! Vi trenger folk fredag.');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await page.locator('.bubble-row.mine', { hasText: 'Hei alle! Vi trenger folk fredag.' }).waitFor();
+    await shot('06c-chat-alle');
+    await page.getByRole('link', { name: 'Tilbake til meldinger' }).click();
+    await page.getByRole('link', { name: 'Ny melding' }).click();
+    await page.getByLabel('Søk etter navn').fill('ahm');
+    if ((await page.locator('#pick-list li:not([hidden])').count()) !== 1) throw new Error('søk i ny melding virker ikke');
+    await page.getByRole('link', { name: /Ahmed Said/ }).click();
+    await page.getByLabel('Melding til Ahmed Said').waitFor();
+    await page.getByRole('link', { name: 'Tilbake til meldinger' }).click();
+    step('meldinger: ulest-merke, svar til én, beskjed til alle, søk');
     await shot('06-nyheter');
 
     // Info og profil
@@ -146,6 +174,15 @@ fs.mkdirSync(OUT, { recursive: true });
     if (await page.getByRole('button', { name: 'Endre oppmøtested' }).count()) throw new Error('forelder kan endre oppmøtested');
     await page.getByRole('navigation', { name: 'Hovedmeny' }).getByRole('link', { name: 'Nyheter' }).click();
     step('ny konto blir forelder uten Kontor og nyhetsknapp');
+    await page.getByRole('link', { name: /^Meldinger/ }).click();
+    await page.getByRole('link', { name: /Til alle/ }).click();
+    await page.getByText('Hei alle! Vi trenger folk fredag.').waitFor();
+    await page.getByText('Bare koordinatorene kan skrive her', { exact: false }).waitFor();
+    if (await page.getByLabel('Beskjed til alle').count()) throw new Error('forelder kan skrive til alle');
+    await page.getByRole('link', { name: 'Tilbake til meldinger' }).click();
+    if (await page.getByText('Takk! Jeg tar gjerne fredag.').count()) throw new Error('forelder ser andres meldinger');
+    await page.getByRole('navigation', { name: 'Hovedmeny' }).getByRole('link', { name: 'Vakter' }).click();
+    step('forelder leser «Til alle», kan ikke skrive der, ser ikke andres meldinger');
 
     // Tastatur: hopp til innhold
     await page.reload();

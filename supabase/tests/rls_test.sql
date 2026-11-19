@@ -83,6 +83,33 @@ do $$ begin
   end;
 end $$;
 
+-- Meldinger
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000b', false) \g /dev/null
+set role authenticated;
+insert into messages (recipient_id, body) values ('00000000-0000-0000-0000-00000000000c', 'Hei Per, går du fredag?');
+do $$ begin
+  begin
+    insert into messages (recipient_id, body) values (null, 'til alle fra forelder');
+    raise exception 'SKULLE FEILET: forelder skriver til alle';
+  exception when insufficient_privilege then null; end;
+  begin
+    insert into messages (sender_id, recipient_id, body) values ('00000000-0000-0000-0000-00000000000c', '00000000-0000-0000-0000-00000000000b', 'falsk avsender');
+    raise exception 'SKULLE FEILET: falsk avsender';
+  exception when insufficient_privilege then null; end;
+end $$;
+insert into chat_reads (thread) values ('alle');
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a', false) \g /dev/null
+insert into messages (recipient_id, body) values (null, 'Hei alle! Husk refleks.');
+do $$ begin
+  assert (select count(*) from messages) = 1, 'koordinator skal ikke se andres direktemeldinger';
+  assert (select count(*) from chat_reads) = 0, 'skal ikke se andres lesestatus';
+end $$;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000c', false) \g /dev/null
+do $$ begin assert (select count(*) from messages) = 2, 'Per ser meldingen til seg og beskjeden til alle'; end $$;
+delete from messages where recipient_id is null;
+do $$ begin assert (select count(*) from messages) = 2, 'Per skal ikke kunne slette beskjeden til alle'; end $$;
+reset role;
+
 -- Anonym: ingen tilgang
 reset role;
 set role anon;
