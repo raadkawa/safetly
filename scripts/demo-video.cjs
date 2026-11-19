@@ -8,11 +8,13 @@ const fs = require('node:fs');
 const PORT = 8097;
 const OUT = process.argv[2] || path.join(__dirname, '..', 'demo-video');
 fs.mkdirSync(OUT, { recursive: true });
-const W = 390, H = 844;
+// 9:16 fullskjerm, 1080×1920
+const W = 390, H = Math.round(390 * 16 / 9), OUT_W = 1080, OUT_H = 1920;
 
 const DEMO_CONFIG = "window.SAFETLY_CONFIG={meetingPlace:{name:'Nærbutikken ved Torget',address:'Storgata 12',note:'Møt opp 10 minutter før vakt. Vester og lykter ligger i kassen bak disken.'}};";
 
 const OVERLAY_CSS = `
+.demo-banner{display:none !important}
 #demo-cap{position:fixed;left:12px;right:12px;bottom:110px;z-index:9999;background:rgba(28,26,22,.92);color:#FFFCF6;
   font:600 17px/1.35 Figtree,system-ui,sans-serif;padding:14px 18px;border-radius:20px;box-shadow:0 8px 24px rgba(0,0,0,.25);
   opacity:0;transform:translateY(8px);transition:opacity .35s,transform .35s;pointer-events:none;text-align:center}
@@ -32,8 +34,8 @@ const OVERLAY_CSS = `
   await new Promise((r) => setTimeout(r, 700));
   const browser = await chromium.launch();
   const ctx = await browser.newContext({
-    viewport: { width: W, height: H }, deviceScaleFactor: 2, locale: 'nb-NO', serviceWorkers: 'block', hasTouch: true,
-    recordVideo: { dir: OUT, size: { width: W * 2, height: H * 2 } }
+    viewport: { width: W, height: H }, deviceScaleFactor: OUT_W / W, locale: 'nb-NO', serviceWorkers: 'block', hasTouch: true,
+    recordVideo: { dir: OUT, size: { width: OUT_W, height: OUT_H } }
   });
   await ctx.route('**/config.js', (r) => r.fulfill({ contentType: 'text/javascript', body: DEMO_CONFIG }));
   await ctx.addInitScript((css) => {
@@ -216,7 +218,7 @@ const OVERLAY_CSS = `
     server.kill();
     const webm = await video.path();
     const mp4 = path.join(OUT, 'safetly-demo.mp4');
-    execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-i', webm, '-c:v', 'libx264', '-preset', 'slow', '-crf', '20', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-r', '30', mp4]);
+    execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-i', webm, '-c:v', 'libx264', '-preset', 'slow', '-crf', '20', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-r', '30', '-vf', `scale=${OUT_W}:${OUT_H}:flags=lanczos,setsar=1`, mp4]);
     fs.unlinkSync(webm);
     console.log('Video: ' + mp4);
   }
