@@ -33,6 +33,9 @@ const NARR = {
   rapport: 'Etter vakten skriver du en kort vaktrapport. Var det en rolig kveld, litt uro, eller trengte noen hjelp? Husk: ingen navn på barn.',
   nyheter: 'Under Nyheter legger koordinatorene ut ukas beskjeder. Her ser alle også vaktrapportene.',
   arr: 'Alle kan lage arrangementer, som en refleksvandring eller et foreldremøte. Trykk Jeg kommer for å melde deg på.',
+  chat1: 'Med meldinger kan du skrive direkte til andre foreldre, for eksempel for å avtale en vakt. Det røde tallet viser hvor mange meldinger du ikke har lest.',
+  chat2: 'Bare dere to kan lese samtalen. Når meldingen er lest, står det sett, med klokkeslett.',
+  chat3: 'Koordinatorene kan sende en beskjed til alle på en gang, og se hvor mange som har lest den.',
   info: 'Under Info finner du oppmøtestedet, og telefonnummeret til koordinatorene.',
   guide: 'Her står også hvordan en vakt går, steg for steg.',
   nod: 'Du finner nødnumrene, og hvor mange vakter du har gått.',
@@ -62,6 +65,7 @@ function makeVoice() {
 const DEMO_CONFIG = "window.SAFETLY_CONFIG={meetingPlace:{name:'Nærbutikken ved Torget',address:'Storgata 12',note:'Møt opp 10 minutter før vakt. Vester og lykter ligger i kassen bak disken.'}};";
 const OVERLAY_CSS = `
 body{zoom:${Z}}
+.wrap{min-height:calc(100vh / ${Z}) !important}
 #demo-layer{position:fixed;inset:0;zoom:${Z};pointer-events:none;z-index:9999}
 .demo-banner{display:none !important}
 #demo-cap{position:fixed;left:12px;right:12px;bottom:110px;z-index:9999;background:rgba(28,26,22,.92);color:#FFFCF6;
@@ -230,7 +234,34 @@ body{zoom:${Z}}
     await tap(page.getByRole('button', { name: 'Jeg kommer' }).first(), 600);
     await s.done();
 
+    // Meldinger
     await hideCaption();
+    await scrollTo(0, 500);
+    s = say('chat1');
+    await caption('Meldinger: skriv til andre foreldre', 'Det røde tallet viser uleste meldinger');
+    await wait(3200);
+    await tap(page.getByRole('link', { name: /^Meldinger/ }), 500);
+    await s.done();
+    await tap(page.getByRole('link', { name: /Kari Nilsen/ }), 500);
+    s = say('chat2');
+    await caption('Bare dere to ser samtalen', 'Sendt blir til Sett når meldingen er lest');
+    await type(page.locator('textarea[data-autogrow]'), 'Takk! Jeg tar gjerne fredag kveld.');
+    await tap(page.getByRole('button', { name: 'Send' }), 300);
+    await page.locator('.receipt.seen').first().waitFor({ timeout: 10000 });
+    await s.done();
+    await wait(600);
+    await tap(page.getByRole('link', { name: 'Tilbake til meldinger' }), 400);
+    await tap(page.getByRole('link', { name: /Til alle/ }), 500);
+    s = say('chat3');
+    await caption('Koordinatorer skriver til alle', 'og ser hvor mange som har lest');
+    await type(page.locator('textarea[data-autogrow]'), 'Hei alle! Vi trenger tre voksne fredag.');
+    await tap(page.getByRole('button', { name: 'Send' }), 300);
+    await page.locator('.receipt.seen', { hasText: /Sett av [1-9]/ }).first().waitFor({ timeout: 10000 });
+    await s.done();
+    await wait(600);
+    await hideCaption();
+    await tap(page.getByRole('link', { name: 'Tilbake til meldinger' }), 400);
+
     await tap(nav('Info'), 400);
     s = say('info');
     await caption('Info: oppmøtested og koordinatorer', 'Ring koordinatorene rett fra appen');
@@ -357,7 +388,7 @@ w = wave.open(out, 'wb'); w.setnchannels(1); w.setsampwidth(2); w.setframerate(r
       <div class="blob" style="right:120px;top:-200px;width:360px;height:320px;background:#F5E2A0;transform:rotate(10deg)"></div>
       <div class="side l"><div class="logo"><svg width="80" height="80" viewBox="0 0 24 24" fill="currentColor"><path d="M15.5 4a8 8 0 1 0 4.5 13.5A6.5 6.5 0 0 1 15.5 4z"/></svg></div>
         <h1>Safetly</h1><p>Natteravner i nabolaget.<br>Foreldre sammen for et tryggere nærmiljø.</p></div>
-      <div class="side r"><ul><li>Book vakter</li><li>Se hvem du går med</li><li>Vaktrapporter</li><li>Arrangementer</li><li>Nødhjelp</li></ul>
+      <div class="side r"><ul><li>Book vakter</li><li>Se hvem du går med</li><li>Vaktrapporter</li><li>Meldinger</li><li>Arrangementer</li><li>Nødhjelp</li></ul>
         <span class="pill">raadkawa.github.io/safetly</span></div>
     </body></html>`);
     await p2.waitForTimeout(300);
