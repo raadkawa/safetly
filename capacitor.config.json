@@ -1,0 +1,12 @@
+{
+  "appId": "no.safetly.app",
+  "appName": "Safetly",
+  "webDir": "www",
+  "backgroundColor": "#F6F0E4",
+  "android": {
+    "allowMixedContent": false
+  },
+  "ios": {
+    "contentInset": "never"
+  }
+}
