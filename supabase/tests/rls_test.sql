@@ -44,6 +44,11 @@ insert into event_attendees (event_id) select id from events limit 1;
 update profiles set full_name = 'Ola H.' where id = auth.uid();
 update private_contacts set phone = '11111111' where user_id = auth.uid();
 
+do $$ begin
+  update settings set meeting_name = 'hacket' where id = 1;
+  assert (select meeting_name from settings where id = 1) = '', 'forelder skal ikke endre oppmøtested';
+end $$;
+
 -- Som forelder Per
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000c', false) \g /dev/null
 delete from bookings where user_id = '00000000-0000-0000-0000-00000000000b';
@@ -62,6 +67,8 @@ do $$ begin
   assert (select count(*) from private_contacts) = 3, 'koordinator ser alle numre';
 end $$;
 insert into news (title, body) values ('Ukas nytt', 'Vi trenger flere fredag');
+update settings set meeting_name = 'Torget' where id = 1;
+do $$ begin assert (select meeting_name from settings where id = 1) = 'Torget', 'koordinator kan endre oppmøtested'; end $$;
 update profiles set role = 'koordinator' where full_name = 'Per Berg';
 do $$ begin assert (select role from profiles where full_name = 'Per Berg') = 'koordinator', 'koordinator kan endre rolle'; end $$;
 delete from bookings where user_id = '00000000-0000-0000-0000-00000000000b';

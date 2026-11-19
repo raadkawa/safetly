@@ -1,5 +1,5 @@
 // Safetly service worker: appen virker offline (skall og skrift). Data hentes alltid fra Supabase.
-const CACHE = 'safetly-v1';
+const CACHE = 'safetly-v2';
 const SHELL = [
   './', 'index.html', 'styles.css', 'app.js', 'config.js', 'vendor/supabase.js', 'manifest.webmanifest',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',

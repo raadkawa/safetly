@@ -117,6 +117,11 @@
       async unattend(eventId) { ok(await sb.from('event_attendees').delete().eq('event_id', eventId).eq('user_id', userId)); },
       async updateName(name) { ok(await sb.from('profiles').update({ full_name: name }).eq('id', userId)); },
       async updatePhone(phone) { ok(await sb.from('private_contacts').upsert({ user_id: userId, phone })); },
+      async settings() { return ok(await sb.from('settings').select('meeting_name,meeting_address,meeting_note').eq('id', 1).maybeSingle()); },
+      async updateSettings(v) {
+        const rows = ok(await sb.from('settings').update(Object.assign({ updated_at: new Date().toISOString() }, v)).eq('id', 1).select('id'));
+        if (!rows || !rows.length) throw new Error('permission denied');
+      },
       async setRole(id, role) { ok(await sb.from('profiles').update({ role }).eq('id', id)); }
     };
   }
@@ -236,6 +241,8 @@
       async unattend(eventId) { const m = need(); db.attendees = db.attendees.filter((a) => !(a.event_id === eventId && a.user_id === m.id)); save(); },
       async updateName(name) { need().full_name = name; save(); },
       async updatePhone(phone) { need().phone = phone; save(); },
+      async settings() { need(); return db.settings || null; },
+      async updateSettings(v) { coord(); db.settings = Object.assign({}, db.settings, v); save(); },
       async setRole(id, role) {
         coord(); const u = db.users.find((x) => x.id === id);
         if (!u) return;
@@ -256,7 +263,7 @@
     range: null,
     weekStart: weekStart(today()), selDay: iso(today()), repeat: false,
     cal: { y: today().getFullYear(), m: today().getMonth() }, calSel: iso(today()),
-    eventForm: false, newsForm: false, kontorWeek: weekStart(today()),
+    eventForm: false, newsForm: false, meetingForm: false, settings: null, kontorWeek: weekStart(today()),
     theme: prefs.theme || 'auto', big: !!prefs.big,
     busy: false, lastRoute: null, backRoute: '#/vakter'
   };
@@ -268,6 +275,11 @@
   }
 
   const isCoord = () => !!(S.me && S.me.role === 'koordinator');
+  function meeting() {
+    const st = S.settings; const cf = CFG.meetingPlace || {};
+    if (st && (st.meeting_name || st.meeting_address || st.meeting_note)) return { name: st.meeting_name, address: st.meeting_address, note: st.meeting_note };
+    return { name: cf.name || '', address: cf.address || '', note: cf.note || '' };
+  }
   const nameOf = (id) => (id === (S.user && S.user.id) ? 'Deg' : shortName((S.profiles[id] || {}).full_name));
   function shiftPeople(date, slot) { return S.bookings.filter((b) => b.shift_date === date && b.slot === slot); }
   function myBooking(date, slot) { return S.bookings.find((b) => b.shift_date === date && b.slot === slot && b.user_id === S.user.id); }
@@ -285,6 +297,7 @@
     ]);
     S.profiles = {}; profiles.forEach((p) => { S.profiles[p.id] = p; });
     S.phones = {}; phones.forEach((p) => { S.phones[p.user_id] = p.phone; });
+    try { S.settings = await api.settings(); } catch (e) { S.settings = null; } // før settings-tabellen finnes
     S.contacts = contacts || []; S.bookings = bookings; S.myBookings = mine; S.news = news; S.reports = reports;
     S.myReports = myReports; S.events = events; S.attendees = attendees;
     S.me = S.profiles[S.user.id] || null;
@@ -420,7 +433,7 @@
       html += `<section class="card blue" aria-labelledby="neste">
         <h2 id="neste" class="eyebrow">Din neste vakt</h2>
         <div class="stack-s"><p class="big-num">${SLOTS[next.slot].start}–${SLOTS[next.slot].end}</p><p style="font-weight:600;font-size:1.0625rem">${isToday ? 'I kveld · ' : ''}${cap(fmtDay(next.shift_date))}</p></div>
-        <p class="muted">${partners.length ? `Du går sammen med <b style="color:var(--ink)">${esc(partners.join(' og '))}</b>` : '<b style="color:var(--ink)">Ingen andre er påmeldt ennå.</b>'} · Oppmøte: ${esc((CFG.meetingPlace || {}).name || 'se Info')}</p>
+        <p class="muted">${partners.length ? `Du går sammen med <b style="color:var(--ink)">${esc(partners.join(' og '))}</b>` : '<b style="color:var(--ink)">Ingen andre er påmeldt ennå.</b>'} · Oppmøte: ${esc(meeting().name || 'se Info')}</p>
         <div class="wrap-row"><a class="pill sm" href="#/info">Slik går en vakt</a><button type="button" class="pill ghost sm" data-act="unbook" data-id="${next.id}" data-label="${esc(shiftLabel(next.shift_date, next.slot))}">Avbook</button></div>
       </section>`;
     }
@@ -589,13 +602,23 @@
 
   // ------------------------------------------------------------------ Info
   function viewInfo() {
-    const mp = CFG.meetingPlace || {};
+    const mp = meeting();
     const now = new Date();
     const done = S.myBookings.filter((b) => shiftEnd(b.shift_date, b.slot) <= now);
     let html = '<h1 tabindex="-1">Info</h1>';
-    html += `<section class="card blue" aria-labelledby="oppmote"><h2 id="oppmote" class="eyebrow">Oppmøtested</h2>
-      <p style="font-family:Bricolage,sans-serif;font-size:1.375rem;font-weight:700">${esc(mp.name || 'Ikke satt')}</p>
-      <p>${esc([mp.address, mp.note].filter(Boolean).join('. '))}</p></section>`;
+    html += `<section class="card blue" aria-labelledby="oppmote"><div class="between"><h2 id="oppmote" class="eyebrow">Oppmøtested</h2>
+      ${isCoord() && !S.meetingForm ? '<button type="button" class="pill ghost sm" data-act="toggle-meeting" aria-label="Endre oppmøtested">Endre</button>' : ''}</div>`;
+    if (isCoord() && S.meetingForm) {
+      html += `<form class="stack" data-form="meeting" aria-label="Endre oppmøtested">
+        <label class="field">Sted<input id="m-name" name="mname" required maxlength="120" value="${esc(mp.name)}" placeholder="F.eks. Nærbutikken ved Torget"></label>
+        <label class="field">Adresse<input id="m-address" name="maddress" maxlength="200" value="${esc(mp.address)}"></label>
+        <label class="field">Beskjed til de som går vakt<textarea id="m-note" name="mnote" maxlength="500" rows="3">${esc(mp.note)}</textarea></label>
+        <div class="wrap-row"><button type="submit" class="pill">Lagre</button><button type="button" class="pill ghost" data-act="toggle-meeting">Avbryt</button></div></form>`;
+    } else {
+      html += `<p style="font-family:Bricolage,sans-serif;font-size:1.375rem;font-weight:700">${esc(mp.name || 'Ikke satt')}</p>
+      ${mp.address ? `<p style="font-weight:600">${esc(mp.address)}</p>` : ''}${mp.note ? `<p class="pre">${esc(mp.note)}</p>` : ''}`;
+    }
+    html += '</section>';
     html += `<section class="card yellow" aria-labelledby="koord"><h2 id="koord" style="font-size:1.25rem">Koordinatorer</h2>
       ${S.contacts.length ? S.contacts.map((c) => c.phone
         ? `<a class="tel-card" href="${esc(telHref(c.phone))}"><b>${esc(c.full_name)}</b><span class="muted">Ring ${esc(c.phone)}</span></a>`
@@ -832,6 +855,7 @@
     },
     'cal-sel'(el) { S.calSel = el.dataset.date; render(); },
     'toggle-news'() { S.newsForm = !S.newsForm; render(); },
+    'toggle-meeting'() { S.meetingForm = !S.meetingForm; render(); const f = $('#m-name'); if (f) f.focus(); },
     'del-news'(el) { if (!confirm('Slette nyheten?')) return; run(async () => { await api.deleteNews(el.dataset.id); S.news = await api.news(); }, 'Nyheten er slettet.'); },
     'toggle-event'() { S.eventForm = !S.eventForm; render(); if (S.eventForm) { const f = $('#e-title'); if (f) f.focus(); } },
     'del-event'(el) { if (!confirm('Slette arrangementet?')) return; run(async () => { await api.deleteEvent(el.dataset.id); await reloadEvents(); }, 'Arrangementet er slettet.'); },
@@ -874,6 +898,11 @@
     async event(f) {
       await api.addEvent({ title: f.title.value.trim(), event_date: f.date.value, event_time: f.time.value, place: f.place.value.trim(), description: f.description.value.trim() });
       f.reset(); S.eventForm = false; await reloadEvents(); toast('Arrangementet er opprettet.');
+    },
+    async meeting(f) {
+      await api.updateSettings({ meeting_name: f.mname.value.trim(), meeting_address: f.maddress.value.trim(), meeting_note: f.mnote.value.trim() });
+      S.settings = await api.settings(); S.meetingForm = false;
+      toast('Oppmøtestedet er lagret.');
     },
     async profile(f) {
       const name = f.name.value.trim(); const phone = f.phone.value.trim();

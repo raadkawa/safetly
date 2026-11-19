@@ -13,7 +13,7 @@ fs.mkdirSync(OUT, { recursive: true });
   const server = spawn(process.execPath, [path.join(__dirname, 'serve.mjs')], { env: { ...process.env, PORT: String(PORT) }, stdio: 'ignore' });
   await new Promise((r) => setTimeout(r, 600));
   const browser = await chromium.launch();
-  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, locale: 'nb-NO' });
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, locale: 'nb-NO', serviceWorkers: 'block' });
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
@@ -22,6 +22,8 @@ fs.mkdirSync(OUT, { recursive: true });
   const shot = (n) => page.screenshot({ path: path.join(OUT, n + '.png'), fullPage: true });
   const step = (msg) => console.log('✓ ' + msg);
   try {
+    // Kjør alltid i demomodus, uansett hva config.js inneholder.
+    await page.route('**/config.js', (r) => r.fulfill({ contentType: 'text/javascript', body: "window.SAFETLY_CONFIG={meetingPlace:{name:'Nærbutikken ved Torget',address:'Storgata 12',note:''}};" }));
     await page.goto(`http://localhost:${PORT}/`);
     await page.getByRole('button', { name: 'Ny konto' }).click();
     await page.getByLabel('Navn').fill('Ingrid Haugen');
@@ -88,6 +90,13 @@ fs.mkdirSync(OUT, { recursive: true });
     await page.getByRole('navigation', { name: 'Hovedmeny' }).getByRole('link', { name: 'Info' }).click();
     await page.getByRole('heading', { name: 'Koordinatorer' }).waitFor();
     await page.getByText('Ingrid Haugen').first().waitFor();
+    await page.getByRole('button', { name: 'Endre oppmøtested' }).click();
+    await page.getByRole('textbox', { name: 'Sted', exact: true }).fill('Skolegården');
+    await page.getByRole('textbox', { name: 'Adresse' }).fill('Skoleveien 1');
+    await page.getByRole('button', { name: 'Lagre', exact: true }).click();
+    await page.getByText('Oppmøtestedet er lagret.').waitFor();
+    await page.getByText('Skolegården').first().waitFor();
+    step('koordinator endret oppmøtested');
     await page.getByRole('button', { name: 'Mørk' }).click();
     if ((await page.evaluate(() => document.documentElement.dataset.theme)) !== 'dark') throw new Error('Mørk modus virket ikke');
     await page.getByRole('switch', { name: 'Større tekst' }).check();
@@ -132,6 +141,10 @@ fs.mkdirSync(OUT, { recursive: true });
     if (await page.getByRole('link', { name: 'Kontor for koordinatorer' }).count()) throw new Error('forelder ser Kontor');
     await page.getByRole('navigation', { name: 'Hovedmeny' }).getByRole('link', { name: 'Nyheter' }).click();
     if (await page.getByRole('button', { name: 'Skriv ny nyhet' }).count()) throw new Error('forelder kan legge ut nyhet');
+    await page.getByRole('navigation', { name: 'Hovedmeny' }).getByRole('link', { name: 'Info' }).click();
+    await page.getByText('Skolegården').first().waitFor();
+    if (await page.getByRole('button', { name: 'Endre oppmøtested' }).count()) throw new Error('forelder kan endre oppmøtested');
+    await page.getByRole('navigation', { name: 'Hovedmeny' }).getByRole('link', { name: 'Nyheter' }).click();
     step('ny konto blir forelder uten Kontor og nyhetsknapp');
 
     // Tastatur: hopp til innhold
