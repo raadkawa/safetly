@@ -366,7 +366,8 @@
       [/rate limit|too many/i, 'For mange forsøk. Vent litt og prøv igjen.'],
       [/Failed to fetch|NetworkError|network/i, 'Fikk ikke kontakt med serveren. Sjekk nettet.'],
       [/row-level security|permission denied|violates/i, 'Du har ikke tilgang til å gjøre dette.'],
-      [/duplicate key/i, 'Dette er allerede registrert.']
+      [/duplicate key/i, 'Dette er allerede registrert.'],
+      [/schema cache|PGRST205|does not exist/i, 'Denne delen av appen er ikke satt opp i databasen ennå. Si fra til en koordinator.']
     ];
     for (const [re, txt] of map) if (re.test(m)) return txt;
     return m || 'Noe gikk galt. Prøv igjen.';
