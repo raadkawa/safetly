@@ -11,7 +11,8 @@
     "android": "npm run build && npx cap sync android && npx cap open android",
     "ios": "npm run build && npx cap sync ios && npx cap open ios",
     "test": "node scripts/smoke.cjs",
-    "test:db": "bash scripts/test_db.sh"
+    "test:db": "bash scripts/test_db.sh",
+    "video": "node scripts/demo-video.cjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.6.2",
