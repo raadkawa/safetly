@@ -45,7 +45,7 @@ npm start
 4. Under **Authentication → URL Configuration**: sett **Site URL** til adressen der nettappen ligger, og legg den til under **Redirect URLs**.
 5. Hent **Project URL** og **anon public key** fra **Project Settings → API**, og fyll dem inn i `www/config.js`. Fyll også inn `siteUrl` og oppmøtestedet.
 
-Har du kjørt `schema.sql` før meldinger og redigerbart oppmøtested kom, kjører du i tillegg `supabase/oppmotested.sql` og `supabase/chat.sql`.
+Har du kjørt `schema.sql` før meldinger og redigerbart oppmøtested kom, kjører du i tillegg `supabase/oppmotested.sql`, `supabase/chat.sql` og `supabase/lest.sql`.
 
 Den **første** kontoen som opprettes blir koordinator. Alle andre blir foreldre, og en koordinator kan endre roller i Kontor.
 

@@ -69,6 +69,8 @@
     alert: () => svg('<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5v.01"/>', { s: 22, w: 2.2 }),
     pen: () => svg('<path d="M4 20h4L19 9l-4-4L4 16z"/>', { s: 20 }),
     chat: (s) => svg('<path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4.5 3.5V17h0A2.5 2.5 0 0 1 4 14.5z"/>', { s: s || 22 }),
+    check: () => svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>', { s: 14, w: 2.6 }),
+    checks: () => svg('<path d="M2.5 12.5l4.5 4.5 9-9.5M9.5 16l1 1 9-9.5"/>', { s: 16, w: 2.4 }),
     send: () => svg('<path d="M5 12h13M13 6l6 6-6 6"/>', { s: 22, w: 2.4 }),
     megaphone: (s) => svg('<path d="M4 10v4a1 1 0 0 0 1 1h2l6 4V5L7 9H5a1 1 0 0 0-1 1zM17 9a4 4 0 0 1 0 6"/>', { s: s || 22 })
   };
@@ -130,6 +132,15 @@
       async sendMessage(recipientId, body) { return ok(await sb.from('messages').insert({ sender_id: userId, recipient_id: recipientId, body }).select('id,sender_id,recipient_id,body,created_at').single()); },
       async reads() { return ok(await sb.from('chat_reads').select('thread,last_read_at')); },
       async markRead(thread) { ok(await sb.from('chat_reads').upsert({ user_id: userId, thread, last_read_at: new Date().toISOString() })); },
+      async peerReads() { return ok(await sb.from('chat_reads').select('user_id,last_read_at').eq('thread', userId)); },
+      async alleReadTimes() { return ok(await sb.rpc('alle_read_times')) || []; },
+      onRead(cb) {
+        const ch = sb.channel('safetly-lest')
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'chat_reads' }, (p) => cb(p.new))
+          .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'chat_reads' }, (p) => cb(p.new))
+          .subscribe();
+        return () => sb.removeChannel(ch);
+      },
       onMessage(cb) {
         const ch = sb.channel('safetly-meldinger').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (p) => cb(p.new)).subscribe();
         return () => sb.removeChannel(ch);
@@ -193,6 +204,16 @@
     const coord = () => { const m = need(); if (m.role !== 'koordinator') throw new Error('Bare koordinatorer kan gjøre dette'); return m; };
     const user = () => { const m = me(); return m ? { id: m.id, email: m.email } : null; };
     const emit = (ev) => listeners.forEach((cb) => cb(user(), ev));
+    let readCbs = [];
+    // Demo: late som om andre leser meldingene dine etter noen sekunder.
+    function fakeRead(readers, thread) {
+      setTimeout(() => {
+        db.reads = db.reads || {};
+        readers.forEach((u) => { (db.reads[u] = db.reads[u] || {})[thread] = new Date().toISOString(); });
+        save();
+        readers.forEach((u) => readCbs.forEach((cb) => cb({ user_id: u, thread, last_read_at: db.reads[u][thread] })));
+      }, 3500);
+    }
     return {
       mode: 'demo',
       async getUser() { return user(); },
@@ -224,11 +245,18 @@
         const m = need();
         if (!recipientId && m.role !== 'koordinator') throw new Error('Bare koordinatorer kan skrive til alle');
         const msg = { id: uid(), sender_id: m.id, recipient_id: recipientId, body, created_at: new Date().toISOString() };
-        (db.messages = db.messages || []).push(msg); save(); return msg;
+        (db.messages = db.messages || []).push(msg); save();
+        const peer = recipientId && db.users.find((u) => u.id === recipientId);
+        if (peer && peer.seed) fakeRead([peer.id], m.id);
+        if (!recipientId) fakeRead(db.users.filter((u) => u.seed).slice(0, 4).map((u) => u.id), 'alle');
+        return msg;
       },
       async reads() { const m = need(); const r = (db.reads || {})[m.id] || {}; return Object.keys(r).map((t) => ({ thread: t, last_read_at: r[t] })); },
       async markRead(thread) { const m = need(); db.reads = db.reads || {}; (db.reads[m.id] = db.reads[m.id] || {})[thread] = new Date().toISOString(); save(); },
       onMessage() { return () => {}; },
+      async peerReads() { const m = need(); const r = db.reads || {}; return Object.keys(r).filter((u) => u !== m.id && r[u][m.id]).map((u) => ({ user_id: u, last_read_at: r[u][m.id] })); },
+      async alleReadTimes() { const m = need(); if (m.role !== 'koordinator') return []; const r = db.reads || {}; return Object.keys(r).filter((u) => u !== m.id && r[u].alle).map((u) => r[u].alle); },
+      onRead(cb) { readCbs.push(cb); return () => { readCbs = readCbs.filter((x) => x !== cb); }; },
       async bookings(from, to) { need(); return db.bookings.filter((b) => b.shift_date >= from && b.shift_date <= to); },
       async myBookings() { const m = need(); return db.bookings.filter((b) => b.user_id === m.id); },
       async book(rows) {
@@ -294,7 +322,7 @@
     eventForm: false, newsForm: false, meetingForm: false, settings: null, kontorWeek: weekStart(today()),
     theme: prefs.theme || 'auto', big: !!prefs.big,
     busy: false, lastRoute: null, backRoute: '#/vakter',
-    messages: [], reads: {}, chatBottom: false
+    messages: [], reads: {}, chatBottom: false, peerReads: {}, alleReads: []
   };
   function savePrefs() { try { localStorage.setItem('safetly-prefs', JSON.stringify({ theme: S.theme, big: S.big })); } catch (e) { /* tom */ } }
   function applyPrefs() {
@@ -332,6 +360,7 @@
     try {
       const [msgs, reads] = await Promise.all([api.messages(), api.reads()]);
       S.messages = msgs; S.reads = {}; reads.forEach((r) => { S.reads[r.thread] = r.last_read_at; });
+      await loadReceipts();
     } catch (e) { S.messages = []; S.reads = {}; } // før meldingstabellene finnes
     S.me = S.profiles[S.user.id] || null;
     S.loaded = true; S.loadError = S.me ? null : 'Fant ikke profilen din. Kjør supabase/schema.sql og prøv igjen.';
@@ -818,6 +847,24 @@
 
 
   // ------------------------------------------------------------------ Meldinger
+  async function loadReceipts() {
+    try {
+      const [peers, alle] = await Promise.all([api.peerReads(), isCoord() ? api.alleReadTimes() : Promise.resolve([])]);
+      S.peerReads = {}; peers.forEach((r) => { S.peerReads[r.user_id] = r.last_read_at; });
+      S.alleReads = (alle || []).map((x) => (typeof x === 'string' ? x : (x && (x.alle_read_times || x.last_read_at)) || '')).filter(Boolean);
+    } catch (e) { /* «sett»-funksjonen er ikke satt opp i databasen ennå */ }
+  }
+  function onReadUpdate(row) {
+    if (!S.user || !row) return;
+    if (row.thread === S.user.id && row.user_id !== S.user.id) { S.peerReads[row.user_id] = row.last_read_at; render(); }
+    else if (row.thread === 'alle' && isCoord()) { loadReceipts().then(render); }
+  }
+  function seenLabel(ts) {
+    const d = new Date(ts); const t = today(); const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const diff = Math.round((t - day) / 86400000);
+    const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return diff === 0 ? `Sett ${hm}` : diff === 1 ? `Sett i går ${hm}` : `Sett ${d.getDate()}.${d.getMonth() + 1}.`;
+  }
   const threadOf = (m) => (!m.recipient_id ? 'alle' : (m.sender_id === S.user.id ? m.recipient_id : m.sender_id));
   // Nye brukere ser siste ukes meldinger som uleste.
   function readBaseline(thread) {
@@ -894,6 +941,9 @@
       <div class="grow"><h1 tabindex="-1" style="font-size:1.25rem">${esc(threadName(thread))}</h1><p class="small muted">${esc(sub)}</p></div></div>
       <ol class="bubbles" aria-label="Meldinger" aria-live="polite">`;
     let lastDay = '';
+    const mineMsgs = msgs.filter((m) => m.sender_id === S.user.id);
+    const lastMineId = mineMsgs.length ? mineMsgs[mineMsgs.length - 1].id : null;
+    const audience = Math.max(0, Object.keys(S.profiles).length - 1);
     msgs.forEach((m, i) => {
       const dl = dayLabel(m.created_at);
       if (dl !== lastDay) { html += `<li class="day-sep"><span>${esc(dl)}</span></li>`; lastDay = dl; }
@@ -901,10 +951,18 @@
       const prev = msgs[i - 1];
       const showName = thread === 'alle' && !mine && (!prev || prev.sender_id !== m.sender_id || dayLabel(prev.created_at) !== dl);
       const d = new Date(m.created_at);
+      let receipt = '';
+      if (mine && thread !== 'alle' && m.id === lastMineId) {
+        const seen = S.peerReads[thread] && Date.parse(S.peerReads[thread]) >= Date.parse(m.created_at);
+        receipt = seen ? `<span class="receipt seen">${I.checks()}${esc(seenLabel(S.peerReads[thread]))}</span>` : `<span class="receipt">${I.check()}Sendt</span>`;
+      } else if (mine && thread === 'alle' && isCoord()) {
+        const n = S.alleReads.filter((t) => Date.parse(t) >= Date.parse(m.created_at)).length;
+        receipt = `<span class="receipt${n ? ' seen' : ''}">${n ? I.checks() : I.check()}Sett av ${n} av ${audience}</span>`;
+      }
       html += `<li class="bubble-row ${mine ? 'mine' : 'theirs'}${thread === 'alle' && !mine ? ' alle' : ''}">
         ${showName ? `<span class="small muted bubble-name">${esc((S.profiles[m.sender_id] || {}).full_name || 'Koordinator')}</span>` : ''}
         <div class="bubble"><span class="sr-only">${mine ? 'Du' : esc(nameOf(m.sender_id))} skrev: </span><p class="pre">${esc(m.body)}</p></div>
-        <span class="bubble-time">${pad(d.getHours())}:${pad(d.getMinutes())}</span></li>`;
+        <span class="bubble-time">${pad(d.getHours())}:${pad(d.getMinutes())}${receipt ? ' · ' : ''}${receipt}</span></li>`;
     });
     html += '</ol>';
     if (!msgs.length) html += `<p class="empty">${thread === 'alle' ? 'Ingen beskjeder til alle ennå.' : 'Ingen meldinger ennå. Si hei!'}</p>`;
@@ -1194,14 +1252,21 @@
     try { await loadAll(); } catch (e) { console.error(e); S.loaded = true; S.loadError = errText(e); }
     render();
     if (stopLive) stopLive();
-    try { stopLive = api.onMessage(onIncoming); } catch (e) { stopLive = null; }
+    try {
+      const a = api.onMessage(onIncoming); const b = api.onRead(onReadUpdate);
+      stopLive = () => { a(); b(); };
+    } catch (e) { stopLive = null; }
     clearInterval(pollTimer);
     pollTimer = setInterval(async () => {
       if (!S.user || !S.loaded || document.visibilityState !== 'visible' || S.busy) return;
       try {
         const msgs = await api.messages();
         const fresh = msgs.filter((m) => !S.messages.some((x) => x.id === m.id));
+        const before = JSON.stringify([S.peerReads, S.alleReads]);
+        await loadReceipts();
+        const changed = before !== JSON.stringify([S.peerReads, S.alleReads]);
         if (fresh.length || msgs.length !== S.messages.length) { S.messages = msgs; fresh.forEach((m) => { if (route() === 'chat' && routeParam() === threadOf(m)) S.chatBottom = true; }); render(); }
+        else if (changed && route() === 'chat') render();
       } catch (e) { /* prøver igjen */ }
     }, 20000);
   }

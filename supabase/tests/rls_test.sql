@@ -110,6 +110,26 @@ delete from messages where recipient_id is null;
 do $$ begin assert (select count(*) from messages) = 2, 'Per skal ikke kunne slette beskjeden til alle'; end $$;
 reset role;
 
+-- Lest / sett
+set role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000c', false) \g /dev/null
+insert into chat_reads (thread, last_read_at) values ('00000000-0000-0000-0000-00000000000b', '2000-01-01');
+insert into chat_reads (thread) values ('alle');
+do $$ begin
+  assert (select last_read_at from chat_reads where thread = '00000000-0000-0000-0000-00000000000b') > '2020-01-01', 'databasen skal sette tidspunktet';
+  assert (select count(*) from alle_read_times()) = 0, 'forelder skal ikke se lesetall';
+end $$;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000b', false) \g /dev/null
+do $$ begin
+  assert (select count(*) from chat_reads where user_id = '00000000-0000-0000-0000-00000000000c') = 1, 'Ola ser at Per har lest samtalen med Ola';
+end $$;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a', false) \g /dev/null
+do $$ begin
+  assert (select count(*) from chat_reads where user_id = '00000000-0000-0000-0000-00000000000c') = 0, 'Kari ser ikke Pers lesestatus med andre';
+  assert (select count(*) from alle_read_times()) = 2, 'koordinator ser antall som har lest «Til alle»';
+end $$;
+reset role;
+
 -- Anonym: ingen tilgang
 reset role;
 set role anon;

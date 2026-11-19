@@ -345,6 +345,44 @@ begin
   end if;
 end $$;
 
+-- ---------------------------------------------------------------- «Sendt / Sett» på meldinger
+
+drop policy if exists "chat_reads_select" on public.chat_reads;
+create policy "chat_reads_select" on public.chat_reads
+  for select to authenticated using (user_id = auth.uid() or thread = auth.uid()::text);
+
+-- Tidspunktet settes av databasen, så feil klokke på en telefon ikke gir feil «Sett».
+create or replace function public.chat_reads_server_time()
+returns trigger language plpgsql as $$
+begin
+  new.last_read_at := now();
+  return new;
+end;
+$$;
+drop trigger if exists chat_reads_time on public.chat_reads;
+create trigger chat_reads_time
+  before insert or update on public.chat_reads
+  for each row execute function public.chat_reads_server_time();
+
+create or replace function public.alle_read_times()
+returns setof timestamptz
+language sql stable security definer
+set search_path = public
+as $$
+  select last_read_at from public.chat_reads
+  where thread = 'alle' and user_id <> auth.uid() and public.is_coordinator();
+$$;
+revoke all on function public.alle_read_times() from public, anon;
+grant execute on function public.alle_read_times() to authenticated;
+
+do $$
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime')
+     and not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'chat_reads') then
+    alter publication supabase_realtime add table public.chat_reads;
+  end if;
+end $$;
+
 -- Ingen tilgang for anonyme brukere.
 revoke all on all tables in schema public from anon;
 grant select, insert, update, delete on all tables in schema public to authenticated;

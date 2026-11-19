@@ -96,6 +96,8 @@ fs.mkdirSync(OUT, { recursive: true });
     await page.getByLabel('Melding til Kari Nilsen').fill('Takk! Jeg tar gjerne fredag.');
     await page.getByRole('button', { name: 'Send' }).click();
     await page.locator('.bubble-row.mine', { hasText: 'Takk! Jeg tar gjerne fredag.' }).waitFor();
+    await page.locator('.receipt', { hasText: 'Sendt' }).waitFor();
+    await page.locator('.receipt.seen', { hasText: /^Sett \d\d:\d\d/ }).waitFor({ timeout: 10000 });
     await shot('06b-chat-samtale');
     await page.getByRole('link', { name: 'Tilbake til meldinger' }).click();
     if (await page.locator('.chat-row', { hasText: 'Kari Nilsen' }).locator('.count-pill').count()) throw new Error('samtalen med Kari er fortsatt ulest etter lesing');
@@ -103,6 +105,8 @@ fs.mkdirSync(OUT, { recursive: true });
     await page.getByLabel('Beskjed til alle').fill('Hei alle! Vi trenger folk fredag.');
     await page.getByRole('button', { name: 'Send' }).click();
     await page.locator('.bubble-row.mine', { hasText: 'Hei alle! Vi trenger folk fredag.' }).waitFor();
+    await page.locator('.receipt', { hasText: /Sett av 0 av \d+/ }).waitFor();
+    await page.locator('.receipt.seen', { hasText: /Sett av 4 av \d+/ }).waitFor({ timeout: 10000 });
     await shot('06c-chat-alle');
     await page.getByRole('link', { name: 'Tilbake til meldinger' }).click();
     await page.getByRole('link', { name: 'Ny melding' }).click();
@@ -111,7 +115,7 @@ fs.mkdirSync(OUT, { recursive: true });
     await page.getByRole('link', { name: /Ahmed Said/ }).click();
     await page.getByLabel('Melding til Ahmed Said').waitFor();
     await page.getByRole('link', { name: 'Tilbake til meldinger' }).click();
-    step('meldinger: ulest-merke, svar til én, beskjed til alle, søk');
+    step('meldinger: ulest-merke, svar til én, beskjed til alle, søk, «Sendt» → «Sett» og «Sett av X av N»');
     await shot('06-nyheter');
 
     // Info og profil

@@ -313,3 +313,5 @@ legend { font-weight: 700; font-size: .9375rem; padding: 0; margin-bottom: .5rem
 .send-btn:hover { opacity: .88; }
 .chat-hint { grid-column: 1 / -1; font-size: .75rem; color: var(--muted); padding-left: 1rem; }
 .composer.readonly { display: flex; flex-direction: column; gap: .5rem; align-items: stretch; }
+.receipt { display: inline-flex; align-items: center; gap: .1875rem; font-weight: 600; vertical-align: middle; }
+.receipt.seen { color: var(--ok); }
