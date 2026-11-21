@@ -64,6 +64,11 @@ Reglene testes mot en lokal Postgres med `npm run test:db` (krever Postgres inst
 
 Kjør `npm run build` og legg ut innholdet i `www/` på en hvilken som helst statisk vert med HTTPS (for eksempel Netlify, Cloudflare Pages eller GitHub Pages). Foreldre kan så velge «Legg til på Hjem-skjerm».
 
+## Automatiske oppdateringer
+
+- **Nettappen / Hjem-skjerm:** hver publisering får et versjonsnummer (`version.json`). Appen ser etter ny versjon når den åpnes, når man går tilbake til den og hvert 10. minutt, og oppdaterer seg selv. Holder noen på å skrive, vises en knapp «Oppdater» i stedet. Testes med `npm run test:update`.
+- **Android-appen:** bygget fra GitHub Actions henter innholdet fra nettappen (`server.url`), så alle får nye versjoner uten ny APK. Uten nett vises `www/offline.html` med nødnumrene.
+
 ## Android (APK via GitHub Actions)
 
 Hver push til `main` bygger en debug-APK. Den ligger under **Actions → Android APK → Artifacts → safetly-apk**. Du kan også starte bygget manuelt med «Run workflow».

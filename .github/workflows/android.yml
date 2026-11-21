@@ -34,6 +34,9 @@ jobs:
 
       - name: Lag Android-prosjekt (hvis det ikke er sjekket inn)
         run: |
+          # Appen henter innholdet fra nettappen, så alle får nye versjoner uten ny APK.
+          # Uten nett vises www/offline.html med nødnumrene.
+          node -e "const f='capacitor.config.json';const c=JSON.parse(require('fs').readFileSync(f));c.server=Object.assign({},c.server,{url:'https://raadkawa.github.io/safetly/',errorPath:'offline.html'});require('fs').writeFileSync(f,JSON.stringify(c,null,2))"
           if [ ! -d android ]; then npx cap add android; fi
           npx capacitor-assets generate --android \
             --iconBackgroundColor '#1C1A16' --iconBackgroundColorDark '#1C1A16' \

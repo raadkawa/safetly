@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="nb">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Safetly – ingen nett</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; min-height: 100vh; display: flex; flex-direction: column; justify-content: center; gap: 18px; padding: 32px 24px;
+    background: #F6F0E4; color: #1C1A16; font: 400 17px/1.45 system-ui, -apple-system, sans-serif; box-sizing: border-box; }
+  @media (prefers-color-scheme: dark) { body { background: #16140F; color: #F2ECE0; } .call { background: #45262E !important; color: #F2ECE0 !important; } }
+  h1 { margin: 0; font-size: 30px; }
+  p { margin: 0; }
+  a.btn { display: inline-flex; justify-content: center; align-items: center; min-height: 52px; padding: 0 24px; border-radius: 999px; background: #1C1A16; color: #F6F0E4; font-weight: 700; text-decoration: none; }
+  .calls { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .call { display: flex; flex-direction: column; justify-content: center; min-height: 72px; padding: 10px 16px; border-radius: 22px; background: #F3D2D8; color: #1C1A16; text-decoration: none; }
+  .call b { font-size: 26px; }
+</style>
+</head>
+<body>
+  <h1>Ingen nett akkurat nå</h1>
+  <p>Safetly trenger internett for å hente vakter og meldinger. Sjekk mobildata eller wifi, og prøv igjen.</p>
+  <a class="btn" href="https://raadkawa.github.io/safetly/">Prøv igjen</a>
+  <p><b>Er noen i fare? Ring med en gang:</b></p>
+  <div class="calls">
+    <a class="call" href="tel:112"><b>112</b>Politi</a>
+    <a class="call" href="tel:113"><b>113</b>Ambulanse</a>
+    <a class="call" href="tel:110"><b>110</b>Brann</a>
+    <a class="call" href="tel:02800"><b>02800</b>Politiet, ikke akutt</a>
+  </div>
+</body>
+</html>

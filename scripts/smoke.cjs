@@ -23,8 +23,13 @@ fs.mkdirSync(OUT, { recursive: true });
   const step = (msg) => console.log('✓ ' + msg);
   try {
     // Kjør alltid i demomodus, uansett hva config.js inneholder.
-    await page.route('**/config.js', (r) => r.fulfill({ contentType: 'text/javascript', body: "window.SAFETLY_CONFIG={meetingPlace:{name:'Nærbutikken ved Torget',address:'Storgata 12',note:''}};" }));
+    // Testene må ALDRI nå den ekte databasen: blokker Supabase helt.
+    let hitSupabase = false;
+    await ctx.route(/supabase\.co/, (r) => { hitSupabase = true; r.abort(); });
+    await page.route(/\/config\.js(\?|$)/, (r) => r.fulfill({ contentType: 'text/javascript', body: "window.SAFETLY_CONFIG={meetingPlace:{name:'Nærbutikken ved Torget',address:'Storgata 12',note:''}};" }));
     await page.goto(`http://localhost:${PORT}/`);
+    // Sperre: ikke gjør noe hvis appen ikke står i demomodus.
+    await page.locator('.demo-banner').waitFor({ timeout: 8000 }).catch(() => { throw new Error('Appen står ikke i demomodus. Testen stoppes før den skriver noe.'); });
     await page.getByRole('button', { name: 'Ny konto' }).click();
     await page.getByLabel('Navn').fill('Ingrid Haugen');
     await page.getByLabel('E-post').fill('ingrid@eksempel.no');
@@ -269,6 +274,7 @@ fs.mkdirSync(OUT, { recursive: true });
       .filter(({ r }) => r.height < 44 && r.width < 44 && !(r.height >= 22)).map(({ t }) => t));
     if (small.length) console.log('  (små mål: ' + small.join(', ') + ')');
 
+    if (hitSupabase) throw new Error('Testen prøvde å nå Supabase. Den skal kjøre i demomodus.');
     if (errors.length) throw new Error('Feil i konsollen:\n' + errors.join('\n'));
     console.log(`\nALLE TESTER OK. Skjermbilder i ${OUT}`);
   } catch (e) {

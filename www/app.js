@@ -1605,8 +1605,54 @@
     if (/type=recovery/.test(location.hash)) S.recovery = true;
     if (S.user && !S.recovery) await startSession(); else render();
     if ('serviceWorker' in navigator && !isNative() && location.protocol !== 'file:') {
-      navigator.serviceWorker.register('sw.js').catch(() => { /* valgfritt */ });
+      navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => { swReg = reg; }).catch(() => { /* valgfritt */ });
     }
   }
+  // ------------------------------------------------------------------ automatiske oppdateringer
+  // Ser etter ny versjon ved oppstart, når appen åpnes igjen og hvert 10. minutt.
+  // Oppdaterer av seg selv når det er trygt; ellers vises en knapp.
+  let swReg = null; let newVersion = null;
+  const APP_VERSION = window.SAFETLY_VERSION || '';
+  const versionsOn = /^[0-9a-z]{4,}$/i.test(APP_VERSION) && location.protocol.startsWith('http');
+  function busyEditing() {
+    if (S.mapEdit || S.shiftDraft || S.eventForm || S.newsForm || S.meetingForm) return true;
+    const a = document.activeElement;
+    if (a && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) return true;
+    return [...document.querySelectorAll('#app textarea, #app input[type="text"], #app input:not([type])')].some((el) => el.value && el.value.trim() && !el.readOnly && el.id !== 'chat-search');
+  }
+  function reloadToNew(v) {
+    try { sessionStorage.setItem('safetly-oppdatert', v); } catch (e) { /* tom */ }
+    toast('Oppdaterer Safetly …');
+    setTimeout(() => location.reload(), 700);
+  }
+  function showUpdateBar() {
+    if (document.getElementById('update-bar')) return;
+    const bar = document.createElement('div');
+    bar.id = 'update-bar'; bar.className = 'update-bar'; bar.setAttribute('role', 'status');
+    bar.innerHTML = '<span>Ny versjon av Safetly er klar.</span><button type="button" class="pill sm">Oppdater</button>';
+    bar.querySelector('button').addEventListener('click', () => reloadToNew(newVersion));
+    document.body.appendChild(bar);
+  }
+  async function checkVersion() {
+    if (!versionsOn || document.visibilityState !== 'visible') return;
+    try {
+      if (swReg) swReg.update().catch(() => {});
+      const r = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' });
+      if (!r.ok) return;
+      const v = String((await r.json()).version || '');
+      if (!v || v === APP_VERSION) return;
+      let tried = ''; try { tried = sessionStorage.getItem('safetly-oppdatert') || ''; } catch (e) { /* tom */ }
+      newVersion = v;
+      if (tried === v) { showUpdateBar(); return; } // unngå at den laster om igjen og igjen
+      if (busyEditing()) showUpdateBar(); else reloadToNew(v);
+    } catch (e) { /* offline: prøver igjen senere */ }
+  }
+  if (versionsOn) {
+    setTimeout(checkVersion, 4000);
+    setInterval(checkVersion, 10 * 60 * 1000);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkVersion(); });
+    window.addEventListener('focus', checkVersion);
+  }
+
   boot();
 })();

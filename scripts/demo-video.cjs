@@ -93,7 +93,8 @@ body{zoom:${Z}}
     viewport: { width: OUT_W, height: OUT_H }, deviceScaleFactor: 1, locale: 'nb-NO', serviceWorkers: 'block', hasTouch: true,
     recordVideo: { dir: TMP, size: { width: OUT_W, height: OUT_H } }
   });
-  await ctx.route('**/config.js', (r) => r.fulfill({ contentType: 'text/javascript', body: DEMO_CONFIG }));
+  await ctx.route(/supabase\.co/, (r) => r.abort()); // aldri den ekte databasen
+  await ctx.route(/\/config\.js(\?|$)/, (r) => r.fulfill({ contentType: 'text/javascript', body: DEMO_CONFIG }));
   await ctx.addInitScript((css) => {
     addEventListener('DOMContentLoaded', () => { const s = document.createElement('style'); s.textContent = css; document.head.appendChild(s); });
     window.__layer = () => { let l = document.getElementById('demo-layer'); if (!l) { l = document.createElement('div'); l.id = 'demo-layer'; document.documentElement.appendChild(l); } return l; };

@@ -360,3 +360,10 @@ legend { font-weight: 700; font-size: .9375rem; padding: 0; margin-bottom: .5rem
 .day-pick span { display: grid; place-items: center; min-height: 2.75rem; border-radius: .875rem; background: var(--surface); font-weight: 700; font-size: .8125rem; }
 .day-pick input:checked + span { background: var(--ink); color: var(--bg); }
 .day-pick input:focus-visible + span { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+/* Ny versjon */
+.update-bar {
+  position: fixed; z-index: 70; left: 50%; transform: translateX(-50%); top: calc(.75rem + var(--safe-t)); width: calc(100% - 1.5rem); max-width: 34.5rem;
+  display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .625rem .625rem .625rem 1.125rem;
+  border-radius: 1.5rem; background: var(--yellow); color: var(--ink); font-weight: 600; box-shadow: 0 .5rem 1.5rem rgba(0,0,0,.18);
+}
