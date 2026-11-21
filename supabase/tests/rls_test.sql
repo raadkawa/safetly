@@ -130,6 +130,16 @@ do $$ begin
 end $$;
 reset role;
 
+-- Kart
+set role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000b', false) \g /dev/null
+update settings set map = '{"area": [[1,1],[1,2],[2,2]]}' where id = 1;
+do $$ begin assert (select map from settings where id = 1) is null, 'forelder skal ikke endre kartet'; end $$;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a', false) \g /dev/null
+update settings set map = '{"name": "Test", "area": [[63.39,10.35],[63.40,10.36],[63.39,10.37]], "checkpoints": []}' where id = 1;
+do $$ begin assert (select map->>'name' from settings where id = 1) = 'Test', 'koordinator kan endre kartet'; end $$;
+reset role;
+
 -- Anonym: ingen tilgang
 reset role;
 set role anon;

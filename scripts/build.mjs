@@ -9,6 +9,8 @@ const www = (p) => join(root, 'www', p);
 
 const files = [
   [nm('@supabase/supabase-js/dist/umd/supabase.js'), www('vendor/supabase.js')],
+  [nm('leaflet/dist/leaflet.js'), www('vendor/leaflet.js')],
+  [nm('leaflet/dist/leaflet.css'), www('vendor/leaflet.css')],
   [nm('@fontsource/figtree/files/figtree-latin-400-normal.woff2'), www('fonts/figtree-400.woff2')],
   [nm('@fontsource/figtree/files/figtree-latin-600-normal.woff2'), www('fonts/figtree-600.woff2')],
   [nm('@fontsource/figtree/files/figtree-latin-700-normal.woff2'), www('fonts/figtree-700.woff2')],

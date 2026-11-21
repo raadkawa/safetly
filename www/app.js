@@ -72,7 +72,11 @@
     check: () => svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>', { s: 14, w: 2.6 }),
     checks: () => svg('<path d="M2.5 12.5l4.5 4.5 9-9.5M9.5 16l1 1 9-9.5"/>', { s: 16, w: 2.4 }),
     send: () => svg('<path d="M5 12h13M13 6l6 6-6 6"/>', { s: 22, w: 2.4 }),
-    megaphone: (s) => svg('<path d="M4 10v4a1 1 0 0 0 1 1h2l6 4V5L7 9H5a1 1 0 0 0-1 1zM17 9a4 4 0 0 1 0 6"/>', { s: s || 22 })
+    megaphone: (s) => svg('<path d="M4 10v4a1 1 0 0 0 1 1h2l6 4V5L7 9H5a1 1 0 0 0-1 1zM17 9a4 4 0 0 1 0 6"/>', { s: s || 22 }),
+    map: (s) => svg('<path d="M9 4.5L3.5 6.5v13L9 17.5l6 2 5.5-2v-13L15 6.5zM9 4.5v13M15 6.5v13"/>', { s: s || 22 }),
+    locate: (s) => svg('<circle cx="12" cy="12" r="3.5"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><circle cx="12" cy="12" r="7.5"/>', { s: s || 20 }),
+    trash: (s) => svg('<path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/>', { s: s || 18 }),
+    up: (s) => svg('<path d="M12 18V6M6.5 11.5L12 6l5.5 5.5"/>', { s: s || 18, w: 2.2 })
   };
 
   // ------------------------------------------------------------------ datalag: Supabase
@@ -122,7 +126,11 @@
       async unattend(eventId) { ok(await sb.from('event_attendees').delete().eq('event_id', eventId).eq('user_id', userId)); },
       async updateName(name) { ok(await sb.from('profiles').update({ full_name: name }).eq('id', userId)); },
       async updatePhone(phone) { ok(await sb.from('private_contacts').upsert({ user_id: userId, phone })); },
-      async settings() { return ok(await sb.from('settings').select('meeting_name,meeting_address,meeting_note').eq('id', 1).maybeSingle()); },
+      async settings() {
+        const r = await sb.from('settings').select('meeting_name,meeting_address,meeting_note,map').eq('id', 1).maybeSingle();
+        if (!r.error) return r.data;
+        return ok(await sb.from('settings').select('meeting_name,meeting_address,meeting_note').eq('id', 1).maybeSingle());
+      },
       async updateSettings(v) {
         const rows = ok(await sb.from('settings').update(Object.assign({ updated_at: new Date().toISOString() }, v)).eq('id', 1).select('id'));
         if (!rows || !rows.length) throw new Error('permission denied');
@@ -319,7 +327,7 @@
     range: null,
     weekStart: weekStart(today()), selDay: iso(today()), repeat: false,
     cal: { y: today().getFullYear(), m: today().getMonth() }, calSel: iso(today()),
-    eventForm: false, newsForm: false, meetingForm: false, settings: null, kontorWeek: weekStart(today()),
+    eventForm: false, newsForm: false, meetingForm: false, settings: null, mapEdit: false, mapDraft: null, mapAdd: false, mapDraw: false, mapView: null, kontorWeek: weekStart(today()),
     theme: prefs.theme || 'auto', big: !!prefs.big,
     busy: false, lastRoute: null, backRoute: '#/vakter',
     messages: [], reads: {}, chatBottom: false, peerReads: {}, alleReads: []
@@ -412,7 +420,7 @@
     ['vakter', 'Vakter', I.shield], ['kalender', 'Kalender', I.cal], ['nyheter', 'Nyheter', I.news],
     ['arrangement', 'Arrangem.', I.people, 'Arrangement'], ['info', 'Info', I.info]
   ];
-  const TITLES = { chat: 'Meldinger', vakter: 'Vakter', kalender: 'Kalender', nyheter: 'Ukas nyheter', arrangement: 'Arrangement', info: 'Info', kontor: 'Kontor', nodhjelp: 'Nødhjelp' };
+  const TITLES = { kart: 'Vaktområde', chat: 'Meldinger', vakter: 'Vakter', kalender: 'Kalender', nyheter: 'Ukas nyheter', arrangement: 'Arrangement', info: 'Info', kontor: 'Kontor', nodhjelp: 'Nødhjelp' };
   function routeParam() { return location.hash.replace(/^#\/?/, '').split('/')[1] || ''; }
   function routeKey() { const r = route(); return r === 'chat' ? 'chat/' + routeParam() : r; }
   function route() {
@@ -434,7 +442,7 @@
     </header>${api.mode === 'demo' ? '<p class="demo-banner">Demomodus: data lagres bare på denne enheten. Legg inn Supabase-nøkler i config.js for å dele med nabolaget.</p>' : ''}`;
   }
   function nav(current) {
-    const active = current === 'kontor' ? 'info' : current;
+    const active = (current === 'kontor' || current === 'kart') ? 'info' : current;
     return `<nav class="nav" aria-label="Hovedmeny">${NAV.map(([id, label, icon, full]) =>
       `<a href="#/${id}"${id === active ? ' aria-current="page"' : ''}${full ? ` aria-label="${full}"` : ''}>${icon()}<span>${label}</span></a>`).join('')}</nav>`;
   }
@@ -505,6 +513,7 @@
         <div class="stack-s"><p class="big-num">${SLOTS[next.slot].start}–${SLOTS[next.slot].end}</p><p style="font-weight:600;font-size:1.0625rem">${isToday ? 'I kveld · ' : ''}${cap(fmtDay(next.shift_date))}</p></div>
         <p class="muted">${partners.length ? `Du går sammen med <b style="color:var(--ink)">${esc(partners.join(' og '))}</b>` : '<b style="color:var(--ink)">Ingen andre er påmeldt ennå.</b>'} · Oppmøte: ${esc(meeting().name || 'se Info')}</p>
         <div class="wrap-row"><a class="pill sm" href="#/info">Slik går en vakt</a><button type="button" class="pill ghost sm" data-act="unbook" data-id="${next.id}" data-label="${esc(shiftLabel(next.shift_date, next.slot))}">Avbook</button>
+        <a class="pill ghost sm" href="#/kart">${I.map(18)}Kart</a>
         ${shiftPeople(next.shift_date, next.slot).filter((b) => b.user_id !== S.user.id).map((b) => `<a class="pill ghost sm" href="#/chat/${b.user_id}">${I.chat(18)}Skriv til ${esc(shortName((S.profiles[b.user_id] || {}).full_name).split(' ')[0])}</a>`).join('')}</div>
       </section>`;
     }
@@ -690,6 +699,10 @@
       ${mp.address ? `<p style="font-weight:600">${esc(mp.address)}</p>` : ''}${mp.note ? `<p class="pre">${esc(mp.note)}</p>` : ''}`;
     }
     html += '</section>';
+    const md = currentMap();
+    html += `<a class="card map-card" href="#/kart"><span class="map-card-icon" aria-hidden="true">${I.map(26)}</span>
+      <span class="grow stack-s" style="gap:.125rem"><b style="font-size:1.0625rem">Vaktområde og sjekkpunkter</b>
+      <span class="small muted">${md ? `${esc(md.name || 'Kart over området')} · ${(md.checkpoints || []).length} sjekkpunkter` : 'Ikke satt opp ennå'}</span></span>${I.right()}</a>`;
     html += `<section class="card yellow" aria-labelledby="koord"><h2 id="koord" style="font-size:1.25rem">Koordinatorer</h2>
       ${S.contacts.length ? S.contacts.map((c) => c.phone
         ? `<a class="tel-card" href="${esc(telHref(c.phone))}"><b>${esc(c.full_name)}</b><span class="muted">Ring ${esc(c.phone)}</span></a>`
@@ -989,8 +1002,160 @@
     render();
   }
 
+
+  // ------------------------------------------------------------------ Vaktområde (kart)
+  const TILE_URL = 'https://cache.kartverket.no/v1/wmts/1.0.0/topograatone/default/webmercator/{z}/{y}/{x}.png';
+  let MAP = null; let LAYERS = null; let ME = null;
+  function currentMap() {
+    const st = S.settings && S.settings.map;
+    if (st && Array.isArray(st.area) && st.area.length > 2) return st;
+    return window.SAFETLY_OMRADE || null;
+  }
+  function mapData() { return S.mapEdit ? S.mapDraft : currentMap(); }
+  function roundKey() { const n = new Date(); if (n.getHours() < 6) n.setDate(n.getDate() - 1); return 'safetly-runde-' + iso(n); }
+  function visited() { try { return new Set(JSON.parse(localStorage.getItem(roundKey())) || []); } catch (e) { return new Set(); } }
+  function saveVisited(set) { try { localStorage.setItem(roundKey(), JSON.stringify([...set])); } catch (e) { /* tom */ } }
+  const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  function isDark() { return S.theme === 'dark' || (S.theme === 'auto' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches); }
+
+  function viewKart() {
+    const d = mapData();
+    if (!d) return '<h1 tabindex="-1">Vaktområde</h1><p class="empty">Vaktområdet er ikke satt opp ennå.</p>';
+    const cps = d.checkpoints || [];
+    const seen = visited();
+    const done = cps.filter((c) => seen.has(c.id)).length;
+    let html = `<div class="page-head"><a href="#/info" class="row back-link">${I.left()}Info</a>
+      <h1 tabindex="-1">Vaktområde</h1><p class="muted">${esc(d.name || '')}${d.name ? ' · ' : ''}Gå innom alle sjekkpunktene i løpet av vakten.</p></div>`;
+    if (S.mapEdit) {
+      html += `<div class="card ink tight" role="status">${S.mapDraw
+        ? `<b>Tegn grensen</b><p class="small">Trykk på kartet rundt hele området, ett punkt om gangen. <span id="draw-count">${d.area.length}</span> punkter så langt.</p>`
+        : S.mapAdd ? '<b>Legg til sjekkpunkt</b><p class="small">Trykk på kartet der sjekkpunktet skal være.</p>'
+        : '<b>Redigerer kartet</b><p class="small">Dra punktene for å flytte dem. Endringene lagres først når du trykker «Lagre kart».</p>'}</div>`;
+    }
+    html += `<div class="map-wrap">
+      <div id="map" class="map${isDark() ? ' dark' : ''}" role="region" aria-label="Kart over vaktområdet med grense og ${cps.length} sjekkpunkter"></div>
+      ${S.mapEdit ? '' : `<button type="button" class="pill sm map-locate" data-act="locate">${I.locate()}Vis meg</button>`}
+    </div>
+    <ul class="legend"><li><span class="lg-area" aria-hidden="true"></span>Vaktområde</li><li><span class="lg-cp" aria-hidden="true">1</span>Sjekkpunkt</li><li><span class="lg-meet" aria-hidden="true">${I.moon(12)}</span>Oppmøte</li></ul>`;
+
+    if (!S.mapEdit) {
+      html += `<section class="card yellow" aria-labelledby="runde">
+        <div class="between"><h2 id="runde" style="font-size:1.25rem">Kveldens runde</h2><span class="badge soft" id="round-count">${done} av ${cps.length}</span></div>
+        <div class="bar" role="img" id="round-bar" aria-label="${done} av ${cps.length} sjekkpunkter besøkt"><span style="width:${cps.length ? Math.round(done / cps.length * 100) : 0}%"></span></div>
+        <ol class="cp-list">
+          <li class="cp-row meet-row"><span class="cp-num meet" aria-hidden="true">${I.moon(14)}</span>
+            <span class="grow stack-s" style="gap:0"><b>Oppmøte: ${esc(meeting().name || 'oppmøtestedet')}</b><span class="small muted">Start og slutt her</span></span>
+            ${d.meet ? `<button type="button" class="icon-btn" data-act="map-focus" data-meet="1" aria-label="Vis oppmøtestedet på kartet">${I.map(18)}</button>` : ''}</li>
+          ${cps.map((c, i) => `<li class="cp-row">
+            <label class="cp-check"><input type="checkbox" id="cp-${esc(c.id)}" data-change="visit" data-id="${esc(c.id)}"${seen.has(c.id) ? ' checked' : ''}>
+              <span class="cp-num" aria-hidden="true">${i + 1}</span>
+              <span class="grow stack-s" style="gap:0"><b>${esc(c.name)}</b>${c.note ? `<span class="small muted">${esc(c.note)}</span>` : ''}</span></label>
+            <button type="button" class="icon-btn" data-act="map-focus" data-i="${i}" aria-label="Vis ${esc(c.name)} på kartet">${I.map(18)}</button></li>`).join('')}
+        </ol>
+        <button type="button" class="link-btn self-start" data-act="round-reset">Nullstill runden</button>
+      </section>
+      <p class="small muted">Avkrysningen lagres bare på denne telefonen og nullstilles neste kveld. «Vis meg» bruker posisjonen din bare her på skjermen, den sendes ikke til noen.</p>`;
+      if (isCoord()) html += `<button type="button" class="pill ghost self-start" data-act="map-edit">${I.pen()}Rediger kart</button>`;
+    } else {
+      html += `<div class="wrap-row">
+        <button type="button" class="pill sm${S.mapAdd ? '' : ' ghost'}" data-act="map-add" aria-pressed="${S.mapAdd}">${I.plus()}Legg til sjekkpunkt</button>
+        ${S.mapDraw
+          ? `<button type="button" class="pill sm" data-act="map-draw-done">Ferdig med grensen</button>`
+          : `<button type="button" class="pill sm ghost" data-act="map-draw">Tegn grensen på nytt</button>`}
+      </div>
+      <label class="field">Navn på området<input id="map-name" maxlength="80" value="${esc(d.name || '')}"></label>
+      <section class="stack" aria-labelledby="cp-edit-h"><h2 id="cp-edit-h" style="font-size:1.25rem">Sjekkpunkter</h2>
+        ${cps.length ? '' : '<p class="empty">Ingen sjekkpunkter. Trykk «Legg til sjekkpunkt» og så på kartet.</p>'}
+        ${cps.map((c, i) => `<div class="card tight cp-edit">
+          <div class="between"><span class="cp-num" aria-hidden="true">${i + 1}</span>
+            <span class="row" style="gap:.25rem">
+              ${i > 0 ? `<button type="button" class="icon-btn" data-act="cp-up" data-i="${i}" aria-label="Flytt ${esc(c.name)} opp">${I.up()}</button>` : ''}
+              <button type="button" class="icon-btn" data-act="cp-del" data-i="${i}" aria-label="Slett ${esc(c.name)}">${I.trash()}</button></span></div>
+          <label class="field">Navn<input id="cpn-${esc(c.id)}" maxlength="60" value="${esc(c.name)}"></label>
+          <label class="field">Hva skal dere se etter<input id="cpt-${esc(c.id)}" maxlength="120" value="${esc(c.note || '')}"></label></div>`).join('')}
+      </section>
+      <div class="wrap-row"><button type="button" class="pill" data-act="map-save">Lagre kart</button><button type="button" class="pill ghost" data-act="map-cancel">Avbryt</button></div>
+      ${S.settings && S.settings.map ? '<button type="button" class="link-btn self-start" data-act="map-default">Gå tilbake til standardkartet</button>' : ''}`;
+    }
+    return html;
+  }
+
+  function mountMap() {
+    const el = document.getElementById('map');
+    if (MAP) { MAP.remove(); MAP = null; LAYERS = null; }
+    if (!el || !window.L) return;
+    const d = mapData(); if (!d) return;
+    MAP = L.map(el, { zoomControl: true, attributionControl: true, scrollWheelZoom: false, zoomSnap: 0.25, zoomDelta: 0.5 });
+    MAP.attributionControl.setPrefix('<a href="https://leafletjs.com">Leaflet</a>');
+    L.tileLayer(TILE_URL, { maxZoom: 19, maxNativeZoom: 18, attribution: '© <a href="https://www.kartverket.no/">Kartverket</a>' }).addTo(MAP);
+    if (S.mapView) MAP.setView(S.mapView.c, S.mapView.z);
+    else if (d.area && d.area.length > 2) MAP.fitBounds(L.polygon(d.area).getBounds(), { padding: [6, 6] });
+    else MAP.setView([63.396, 10.368], 15);
+    MAP.on('moveend', () => { if (MAP) S.mapView = { c: MAP.getCenter(), z: MAP.getZoom() }; });
+    MAP.on('click', onMapClick);
+    drawLayers();
+  }
+  function drawLayers() {
+    if (!MAP) return;
+    if (LAYERS) LAYERS.remove();
+    LAYERS = L.layerGroup().addTo(MAP);
+    const d = mapData(); const ink = cssVar('--ink') || '#1C1A16';
+    const area = d.area || [];
+    const style = { color: ink, weight: 3, dashArray: '8 7', fillColor: cssVar('--blue') || '#D4E3F5', fillOpacity: 0.45, interactive: false };
+    if (area.length > 2 && !S.mapDraw) L.polygon(area, style).addTo(LAYERS);
+    else if (area.length > 1) L.polyline(area, style).addTo(LAYERS);
+    if (S.mapDraw) area.forEach((p) => L.circleMarker(p, { radius: 6, color: ink, weight: 2, fillColor: '#fff', fillOpacity: 1, interactive: false }).addTo(LAYERS));
+    const seen = visited();
+    if (d.meet) {
+      const m = L.marker([d.meet.lat, d.meet.lng], {
+        icon: L.divIcon({ className: 'map-pin meet', html: I.moon(16), iconSize: [32, 32], iconAnchor: [16, 16] }),
+        title: 'Oppmøte: ' + (meeting().name || ''), alt: 'Oppmøte', draggable: !!S.mapEdit && !S.mapDraw, keyboard: true
+      }).addTo(LAYERS);
+      m.bindTooltip('Oppmøte: ' + esc(meeting().name || ''), { direction: 'top', offset: [0, -14] });
+      if (S.mapEdit) m.on('dragend', (e) => { const ll = e.target.getLatLng(); d.meet = { lat: +ll.lat.toFixed(6), lng: +ll.lng.toFixed(6) }; });
+    }
+    (d.checkpoints || []).forEach((c, i) => {
+      const done = !S.mapEdit && seen.has(c.id);
+      const m = L.marker([c.lat, c.lng], {
+        icon: L.divIcon({ className: 'map-pin cp' + (done ? ' done' : ''), html: done ? '✓' : String(i + 1), iconSize: [28, 28], iconAnchor: [14, 14] }),
+        title: `${i + 1}. ${c.name}${done ? ' (besøkt)' : ''}`, alt: c.name, draggable: !!S.mapEdit && !S.mapDraw, keyboard: true
+      }).addTo(LAYERS);
+      m.bindTooltip(`${i + 1}. ${esc(c.name)}`, { direction: 'top', offset: [0, -12] });
+      if (S.mapEdit) m.on('dragend', (e) => { const ll = e.target.getLatLng(); c.lat = +ll.lat.toFixed(6); c.lng = +ll.lng.toFixed(6); });
+    });
+    if (ME) ME.addTo(LAYERS);
+  }
+  function onMapClick(e) {
+    if (!S.mapEdit) return;
+    const ll = [+e.latlng.lat.toFixed(6), +e.latlng.lng.toFixed(6)];
+    if (S.mapDraw) {
+      S.mapDraft.area.push(ll); drawLayers();
+      const c = $('#draw-count'); if (c) c.textContent = S.mapDraft.area.length;
+    } else if (S.mapAdd) {
+      const n = S.mapDraft.checkpoints.length + 1;
+      S.mapDraft.checkpoints.push({ id: 'cp' + Date.now().toString(36), name: 'Sjekkpunkt ' + n, note: '', lat: ll[0], lng: ll[1] });
+      S.mapAdd = false; render(); toast('Sjekkpunkt lagt til. Gi det et navn under kartet.');
+    }
+  }
+  function readDraftInputs() {
+    const d = S.mapDraft; if (!d) return;
+    const nm = $('#map-name'); if (nm) d.name = nm.value.trim();
+    d.checkpoints.forEach((c) => {
+      const a = document.getElementById('cpn-' + c.id); const b = document.getElementById('cpt-' + c.id);
+      if (a) c.name = a.value.trim() || c.name; if (b) c.note = b.value.trim();
+    });
+  }
+  function updateRound() {
+    const d = mapData(); const cps = (d && d.checkpoints) || []; const seen = visited();
+    const done = cps.filter((c) => seen.has(c.id)).length;
+    const rc = $('#round-count'); if (rc) rc.textContent = `${done} av ${cps.length}`;
+    const rb = $('#round-bar'); if (rb) { rb.setAttribute('aria-label', `${done} av ${cps.length} sjekkpunkter besøkt`); rb.firstElementChild.style.width = (cps.length ? Math.round(done / cps.length * 100) : 0) + '%'; }
+    drawLayers();
+    if (cps.length && done === cps.length) toast('Alle sjekkpunktene er besøkt. Godt jobbet!');
+  }
+
   // ------------------------------------------------------------------ tegning
-  const VIEWS = { chat: viewChat, vakter: viewVakter, kalender: viewKalender, nyheter: viewNyheter, arrangement: viewArrangement, info: viewInfo, kontor: viewKontor };
+  const VIEWS = { kart: viewKart, chat: viewChat, vakter: viewVakter, kalender: viewKalender, nyheter: viewNyheter, arrangement: viewArrangement, info: viewInfo, kontor: viewKontor };
   function render() {
     const app = $('#app');
     const r = route();
@@ -1035,6 +1200,7 @@
     document.querySelectorAll('[data-autogrow]').forEach(autogrow);
     if (S.chatBottom && r === 'chat' && routeParam() && routeParam() !== 'ny') { window.scrollTo(0, document.documentElement.scrollHeight); }
     S.chatBottom = false;
+    if (r === 'kart' && S.user && S.loaded) mountMap(); else if (MAP) { MAP.remove(); MAP = null; LAYERS = null; }
   }
   function autogrow(el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight + 4, 160) + 'px'; }
   function updateCounters() {
@@ -1080,6 +1246,49 @@
     },
     'cal-sel'(el) { S.calSel = el.dataset.date; render(); },
     'toggle-news'() { S.newsForm = !S.newsForm; render(); },
+    'map-focus'(el) {
+      const d = mapData(); if (!MAP || !d) return;
+      const p = el.dataset.meet ? [d.meet.lat, d.meet.lng] : [d.checkpoints[+el.dataset.i].lat, d.checkpoints[+el.dataset.i].lng];
+      MAP.flyTo(p, Math.max(MAP.getZoom(), 17), { duration: 0.6 });
+      $('#map').scrollIntoView({ block: 'center', behavior: 'smooth' });
+    },
+    'round-reset'() { saveVisited(new Set()); document.querySelectorAll('[data-change="visit"]').forEach((c) => { c.checked = false; }); updateRound(); },
+    'locate'(el) {
+      if (!navigator.geolocation) { toast('Telefonen din støtter ikke posisjon.', true); return; }
+      el.disabled = true;
+      navigator.geolocation.getCurrentPosition((pos) => {
+        el.disabled = false;
+        const ll = [pos.coords.latitude, pos.coords.longitude];
+        ME = L.circleMarker(ll, { radius: 9, color: '#fff', weight: 3, fillColor: '#2F6FD6', fillOpacity: 1 }).bindTooltip('Her er du');
+        drawLayers(); if (MAP) MAP.flyTo(ll, 17, { duration: 0.6 });
+      }, () => { el.disabled = false; toast('Fikk ikke tak i posisjonen. Sjekk at appen har lov til å bruke posisjon.', true); }, { enableHighAccuracy: true, timeout: 10000 });
+    },
+    'map-edit'() { S.mapDraft = JSON.parse(JSON.stringify(currentMap())); S.mapDraft.checkpoints = S.mapDraft.checkpoints || []; S.mapDraft.area = S.mapDraft.area || []; S.mapEdit = true; S.mapAdd = false; S.mapDraw = false; render(); },
+    'map-cancel'() { S.mapEdit = false; S.mapDraft = null; S.mapAdd = false; S.mapDraw = false; render(); },
+    'map-add'() { readDraftInputs(); S.mapAdd = !S.mapAdd; S.mapDraw = false; render(); },
+    'map-draw'() { readDraftInputs(); S.mapDraft.area = []; S.mapDraw = true; S.mapAdd = false; render(); },
+    'map-draw-done'() {
+      if (S.mapDraft.area.length < 3) { toast('Grensen trenger minst tre punkter.', true); return; }
+      readDraftInputs(); S.mapDraw = false; render();
+    },
+    'cp-del'(el) { readDraftInputs(); const c = S.mapDraft.checkpoints[+el.dataset.i]; if (!confirm(`Slette sjekkpunktet «${c.name}»?`)) return; S.mapDraft.checkpoints.splice(+el.dataset.i, 1); render(); },
+    'cp-up'(el) { readDraftInputs(); const i = +el.dataset.i; const a = S.mapDraft.checkpoints; [a[i - 1], a[i]] = [a[i], a[i - 1]]; render(); },
+    'map-save'() {
+      if (S.mapDraw) { toast('Trykk «Ferdig med grensen» først.', true); return; }
+      readDraftInputs();
+      const d = S.mapDraft;
+      if (d.area.length < 3) { toast('Grensen trenger minst tre punkter.', true); return; }
+      run(async () => {
+        await api.updateSettings({ map: d });
+        S.settings = await api.settings();
+        if (!S.settings || !S.settings.map) throw new Error('Kartet kunne ikke lagres. Er kart.sql kjørt i databasen?');
+        S.mapEdit = false; S.mapDraft = null;
+      }, 'Kartet er lagret for alle.');
+    },
+    'map-default'() {
+      if (!confirm('Gå tilbake til standardkartet? Endringene dere har lagret forsvinner.')) return;
+      run(async () => { await api.updateSettings({ map: null }); S.settings = await api.settings(); S.mapEdit = false; S.mapDraft = null; }, 'Standardkartet brukes igjen.');
+    },
     'toggle-meeting'() { S.meetingForm = !S.meetingForm; render(); const f = $('#m-name'); if (f) f.focus(); },
     'del-news'(el) { if (!confirm('Slette nyheten?')) return; run(async () => { await api.deleteNews(el.dataset.id); S.news = await api.news(); }, 'Nyheten er slettet.'); },
     'toggle-event'() { S.eventForm = !S.eventForm; render(); if (S.eventForm) { const f = $('#e-title'); if (f) f.focus(); } },
@@ -1149,6 +1358,10 @@
     }
   };
   const changes = {
+    visit(el) {
+      const set = visited(); if (el.checked) set.add(el.dataset.id); else set.delete(el.dataset.id);
+      saveVisited(set); updateRound();
+    },
     role(el) {
       const id = el.dataset.id; const role = el.value; const p = S.profiles[id];
       if (!confirm(`Gjøre ${p.full_name} til ${role}?`)) { el.value = p.role; return; }

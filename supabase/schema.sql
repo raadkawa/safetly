@@ -286,6 +286,13 @@ create policy "settings_update" on public.settings
 revoke all on public.settings from anon;
 grant select, update on public.settings to authenticated;
 
+-- ---------------------------------------------------------------- vaktområde (kart)
+
+alter table public.settings add column if not exists map jsonb;
+alter table public.settings drop constraint if exists settings_map_size;
+alter table public.settings add constraint settings_map_size
+  check (map is null or (jsonb_typeof(map) = 'object' and pg_column_size(map) < 50000));
+
 -- ---------------------------------------------------------------- meldinger (chat)
 create table if not exists public.messages (
   id            uuid primary key default gen_random_uuid(),

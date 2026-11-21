@@ -315,3 +315,35 @@ legend { font-weight: 700; font-size: .9375rem; padding: 0; margin-bottom: .5rem
 .composer.readonly { display: flex; flex-direction: column; gap: .5rem; align-items: stretch; }
 .receipt { display: inline-flex; align-items: center; gap: .1875rem; font-weight: 600; vertical-align: middle; }
 .receipt.seen { color: var(--ok); }
+
+/* Vaktområde (kart) */
+.map-card { flex-direction: row; align-items: center; gap: .875rem; text-decoration: none; background: var(--surface); }
+.map-card:hover { color: var(--ink); filter: brightness(.98); }
+.map-card-icon { width: 3rem; height: 3rem; border-radius: 1rem; background: var(--blue); display: grid; place-items: center; flex: none; }
+.map-wrap { position: relative; border-radius: var(--radius); overflow: hidden; box-shadow: 0 0 0 2px var(--ink); }
+.map { height: 30rem; max-height: 68vh; background: var(--surface); }
+.map.dark .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9); }
+.map-locate { position: absolute; z-index: 500; right: .75rem; bottom: .75rem; box-shadow: 0 .25rem .75rem rgba(0,0,0,.25); }
+.leaflet-container { font: 600 .875rem/1.3 Figtree, system-ui, sans-serif; }
+.leaflet-container a { color: var(--ink); }
+.leaflet-bar a, .leaflet-bar a:hover { width: 2.75rem; height: 2.75rem; line-height: 2.75rem; font-size: 1.25rem; color: #1C1A16; }
+.leaflet-tooltip { font-weight: 600; border-radius: .75rem; padding: .375rem .625rem; }
+.map-pin { display: grid !important; place-items: center; border-radius: 999px; font-weight: 800; font-family: Figtree, sans-serif; }
+.map-pin.cp { background: #1C1A16; color: #FFFCF6; border: 2.5px solid #FFFCF6; font-size: 13px; box-shadow: 0 2px 6px rgba(0,0,0,.35); }
+.map-pin.cp.done { background: #1E6A43; }
+.map-pin.meet { background: #F5E2A0; color: #1C1A16; border: 2.5px solid #1C1A16; box-shadow: 0 2px 6px rgba(0,0,0,.35); }
+.map-pin:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.legend .lg-area { width: 1rem; height: .75rem; border: 2px dashed var(--ink); background: var(--blue); border-radius: .25rem; }
+.legend .lg-cp, .legend .lg-meet { width: 1.125rem; height: 1.125rem; border-radius: 999px; display: grid; place-items: center; font-size: .625rem; font-weight: 800; }
+.legend .lg-cp { background: #1C1A16; color: #FFFCF6; }
+.legend .lg-meet { background: #F5E2A0; color: #1C1A16; border: 1.5px solid #1C1A16; }
+.cp-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .5rem; }
+.cp-row { display: flex; align-items: center; gap: .5rem; background: var(--surface); border-radius: 1.25rem; padding: .375rem .375rem .375rem .75rem; }
+.cp-row.meet-row { padding-left: .75rem; min-height: 3.5rem; }
+.cp-check { display: flex; align-items: center; gap: .75rem; flex: 1; min-height: 3.25rem; cursor: pointer; min-width: 0; }
+.cp-check input { width: 1.5rem; height: 1.5rem; margin: 0; accent-color: #1E6A43; flex: none; }
+.cp-num { flex: none; width: 2rem; height: 2rem; border-radius: 999px; background: #1C1A16; color: #FFFCF6; display: grid; place-items: center; font-weight: 800; font-size: .875rem; }
+.cp-num.meet { background: #F5E2A0; color: #1C1A16; border: 2px solid #1C1A16; }
+.cp-check:has(input:checked) .cp-num { background: #1E6A43; }
+.cp-check:has(input:checked) b { text-decoration: line-through; text-decoration-thickness: 2px; color: var(--muted); }
+.cp-edit { gap: .625rem; }

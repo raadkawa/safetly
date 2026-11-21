@@ -20,7 +20,8 @@
     "@capacitor/filesystem": "^8.1.5",
     "@capacitor/ios": "^8.6.2",
     "@capacitor/share": "^8.0.3",
-    "@supabase/supabase-js": "^2.119.2"
+    "@supabase/supabase-js": "^2.119.2",
+    "leaflet": "^1.9.4"
   },
   "devDependencies": {
     "@capacitor/assets": "^4.0.0",
