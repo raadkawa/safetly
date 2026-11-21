@@ -6,3 +6,5 @@ test-shots/
 *.jks
 *.keystore
 demo-video/
+supabase/functions/**/deno.lock
+supabase/.temp/

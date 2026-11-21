@@ -12,7 +12,9 @@ Norsk, mobilvennlig app for natteravner i nabolaget. Foreldre kobles sammen for 
 - **Nødhjelp:** knapp øverst på alle sider, med ringeknapper (112, 113, 110, 02800) og huskeliste. Appen varsler ikke nødetatene selv.
 - **Kontor (bare koordinatorer):** åpne vakter, dekning uke for uke, vaktliste per uke, foreldreliste med rolleendring, fjerne forelder fra vakt og CSV-vaktliste.
 
-Ikke med: push-varsler, automatisk nødvarsling, betaling.
+- **Varsler (push):** ny melding, beskjed til alle, ukas nyheter, påminnelse 2 timer før vakt og kl. 17 når kveldens vakt mangler folk. Hver bruker velger selv under Info → Varsler.
+
+Ikke med: automatisk nødvarsling, betaling.
 
 ## Slik er det bygget
 
@@ -59,6 +61,17 @@ Den **første** kontoen som opprettes blir koordinator. Alle andre blir foreldre
 - Anonyme brukere har ingen tilgang.
 
 Reglene testes mot en lokal Postgres med `npm run test:db` (krever Postgres installert).
+
+## Varsler (push)
+
+Varsler sendes av en liten tjeneste i Supabase (`supabase/functions/push`), også når appen er lukket.
+
+1. Kjør `supabase/push.sql` i SQL Editor (tabeller, og en jobb som sjekker påminnelser hvert 10. minutt).
+2. Lag en tilgangsnøkkel på supabase.com/dashboard/account/tokens og legg den inn i GitHub som secret `SUPABASE_ACCESS_TOKEN`. Arbeidsflyten «Varslingstjeneste (Supabase)» installerer da tjenesten.
+3. Hver bruker slår på varsler under Info → Varsler.
+
+Virker i nettappen: Chrome på Android, og på iPhone (iOS 16.4+) når Safetly er lagt til på Hjem-skjermen. APK-appen får ikke varsler uten et eget Firebase-oppsett.
+Testes med `deno test` i `supabase/functions/push` (se toppen av `test.ts`).
 
 ## Publisere som nettapp (PWA)
 

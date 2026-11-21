@@ -4,7 +4,7 @@
 const CACHE = 'safetly-__VERSION__';
 const SHELL = [
   './', 'index.html', 'offline.html', 'manifest.webmanifest', 'vendor/supabase.js', 'vendor/leaflet.js', 'vendor/leaflet.css',
-  'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',
+  'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/badge-96.png',
   'fonts/figtree-400.woff2', 'fonts/figtree-600.woff2', 'fonts/figtree-700.woff2', 'fonts/bricolage-700.woff2', 'fonts/bricolage-800.woff2'
 ];
 
@@ -30,4 +30,33 @@ self.addEventListener('fetch', (e) => {
       .catch(() => caches.match(e.request, { ignoreSearch: true })
         .then((r) => r || (e.request.mode === 'navigate' ? caches.match('index.html') : undefined)))
   );
+});
+
+// ------------------------------------------------------------------ push-varsler
+self.addEventListener('push', (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (err) { d = { body: e.data ? e.data.text() : '' }; }
+  e.waitUntil(self.registration.showNotification(d.title || 'Safetly', {
+    body: d.body || '',
+    icon: 'icons/icon-192.png',
+    badge: 'icons/badge-96.png',
+    tag: d.tag || undefined,
+    renotify: !!d.tag,
+    lang: 'nb',
+    data: { url: d.url || '#/vakter' }
+  }));
+});
+
+// Trykk på varselet: åpne appen på riktig side (gjenbruk et åpent vindu hvis det finnes).
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const target = new URL(e.notification.data && e.notification.data.url ? e.notification.data.url : './', self.registration.scope).href;
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+    for (const c of list) {
+      if (c.url.startsWith(self.registration.scope)) {
+        return c.focus().then((w) => (w && 'navigate' in w ? w.navigate(target) : w)).catch(() => self.clients.openWindow(target));
+      }
+    }
+    return self.clients.openWindow(target);
+  }));
 });

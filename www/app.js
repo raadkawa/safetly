@@ -144,7 +144,7 @@
       async book(rows) { ok(await sb.from('bookings').upsert(rows, { onConflict: 'user_id,shift_date,slot', ignoreDuplicates: true })); },
       async unbook(id) { ok(await sb.from('bookings').delete().eq('id', id)); },
       async news() { return ok(await sb.from('news').select('id,author_id,title,body,created_at').order('created_at', { ascending: false }).limit(30)); },
-      async addNews(n) { ok(await sb.from('news').insert({ author_id: userId, title: n.title, body: n.body })); },
+      async addNews(n) { return ok(await sb.from('news').insert({ author_id: userId, title: n.title, body: n.body }).select('id').single()); },
       async deleteNews(id) { ok(await sb.from('news').delete().eq('id', id)); },
       async reports() { return ok(await sb.from('reports').select('id,user_id,shift_date,slot,mood,note,created_at').order('shift_date', { ascending: false }).order('slot', { ascending: false }).limit(40)); },
       async myReports() { return ok(await sb.from('reports').select('shift_date,slot').eq('user_id', userId)); },
@@ -169,6 +169,13 @@
         if (!rows || !rows.length) throw new Error('permission denied');
       },
       async setRole(id, role) { ok(await sb.from('profiles').update({ role }).eq('id', id)); },
+      pushReady: true,
+      async pushKey() { const r = await sb.functions.invoke('push', { body: { type: 'public-key' } }); if (r.error || !r.data || !r.data.publicKey) throw new Error('Varslingstjenesten er ikke installert ennå.'); return r.data.publicKey; },
+      async notify(body) { const r = await sb.functions.invoke('push', { body }); if (r.error) throw r.error; return r.data; },
+      async savePush(endpoint, p256dh, auth) { ok(await sb.rpc('save_push_subscription', { p_endpoint: endpoint, p_p256dh: p256dh, p_auth: auth })); },
+      async removePush(endpoint) { ok(await sb.from('push_subscriptions').delete().eq('endpoint', endpoint)); },
+      async myNotify() { const r = await sb.from('profiles').select('notify').eq('id', userId).maybeSingle(); return r.error ? null : (r.data && r.data.notify) || null; },
+      async updateNotify(v) { ok(await sb.from('profiles').update({ notify: v }).eq('id', userId)); },
       async messages() { return ok(await sb.from('messages').select('id,sender_id,recipient_id,body,created_at').order('created_at', { ascending: false }).limit(500)).reverse(); },
       async sendMessage(recipientId, body) { return ok(await sb.from('messages').insert({ sender_id: userId, recipient_id: recipientId, body }).select('id,sender_id,recipient_id,body,created_at').single()); },
       async reads() { return ok(await sb.from('chat_reads').select('thread,last_read_at')); },
@@ -295,6 +302,12 @@
       async reads() { const m = need(); const r = (db.reads || {})[m.id] || {}; return Object.keys(r).map((t) => ({ thread: t, last_read_at: r[t] })); },
       async markRead(thread) { const m = need(); db.reads = db.reads || {}; (db.reads[m.id] = db.reads[m.id] || {})[thread] = new Date().toISOString(); save(); },
       onMessage() { return () => {}; },
+      pushReady: false,
+      async pushKey() { throw new Error('Varsler virker når appen er koblet til nabolagets database.'); },
+      async notify() { return null; },
+      async savePush() {}, async removePush() {},
+      async myNotify() { return need().notify || null; },
+      async updateNotify(v) { need().notify = v; save(); },
       async peerReads() { const m = need(); const r = db.reads || {}; return Object.keys(r).filter((u) => u !== m.id && r[u][m.id]).map((u) => ({ user_id: u, last_read_at: r[u][m.id] })); },
       async alleReadTimes() { const m = need(); if (m.role !== 'koordinator') return []; const r = db.reads || {}; return Object.keys(r).filter((u) => u !== m.id && r[u].alle).map((u) => r[u].alle); },
       onRead(cb) { readCbs.push(cb); return () => { readCbs = readCbs.filter((x) => x !== cb); }; },
@@ -316,7 +329,7 @@
         db.bookings = db.bookings.filter((x) => x.id !== id); save();
       },
       async news() { need(); return db.news.slice().sort((a, b) => b.created_at.localeCompare(a.created_at)); },
-      async addNews(n) { const m = coord(); db.news.push({ id: uid(), author_id: m.id, title: n.title, body: n.body, created_at: new Date().toISOString() }); save(); },
+      async addNews(n) { const m = coord(); const id = uid(); db.news.push({ id, author_id: m.id, title: n.title, body: n.body, created_at: new Date().toISOString() }); save(); return { id }; },
       async deleteNews(id) { coord(); db.news = db.news.filter((x) => x.id !== id); save(); },
       async reports() { need(); return db.reports.slice().sort((a, b) => (b.shift_date + b.slot).localeCompare(a.shift_date + a.slot)); },
       async myReports() { const m = need(); return db.reports.filter((r) => r.user_id === m.id); },
@@ -363,7 +376,7 @@
     eventForm: false, newsForm: false, meetingForm: false, shiftDraft: null, settings: null, mapEdit: false, mapDraft: null, mapAdd: false, mapDraw: false, mapView: null, kontorWeek: weekStart(today()),
     theme: prefs.theme || 'auto', big: !!prefs.big,
     busy: false, lastRoute: null, backRoute: '#/vakter',
-    messages: [], reads: {}, chatBottom: false, peerReads: {}, alleReads: []
+    messages: [], reads: {}, chatBottom: false, pushOn: false, pushPerm: 'default', notify: null, peerReads: {}, alleReads: []
   };
   function savePrefs() { try { localStorage.setItem('safetly-prefs', JSON.stringify({ theme: S.theme, big: S.big })); } catch (e) { /* tom */ } }
   function applyPrefs() {
@@ -760,6 +773,7 @@
       </div><p class="small muted">Safetly varsler ikke nødetatene. Du må ringe selv.</p></section>`;
     html += `<section class="card pink" aria-labelledby="innsats"><h2 id="innsats" style="font-size:1.25rem">Din innsats</h2>
       <dl class="stats"><div><dt>vakter</dt><dd>${done.length}</dd></div><div><dt>timer</dt><dd>${done.length * 2}</dd></div><div><dt>rapporter</dt><dd>${S.myReports.length}</dd></div></dl></section>`;
+    html += viewPushCard();
     html += `<section class="card" aria-labelledby="profil"><h2 id="profil" style="font-size:1.25rem">Profil</h2>
       <p class="small muted">${esc(S.user.email || '')} · ${isCoord() ? 'Koordinator' : 'Forelder'}</p>
       <form class="stack" data-form="profile">
@@ -1043,6 +1057,73 @@
   }
 
 
+
+
+  // ------------------------------------------------------------------ Varsler (push)
+  const NOTIFY_TYPES = [
+    ['meldinger', 'Ny melding til meg'], ['alle', 'Beskjed til alle fra koordinatorene'], ['nyheter', 'Ukas nyheter'],
+    ['vakt', 'Påminnelse 2 timer før vakten min'], ['mangler', 'Kl. 17 når kveldens vakt mangler folk']
+  ];
+  const NOTIFY_DEFAULT = { meldinger: true, alle: true, nyheter: true, vakt: true, mangler: true };
+  function pushSupport() {
+    if (!api.pushReady) return 'demo';
+    if (isNative()) return 'native';
+    const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
+    const standalone = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return ios && !standalone ? 'ios-browser' : 'unsupported';
+    return 'ok';
+  }
+  async function currentSubscription() {
+    try { const reg = await navigator.serviceWorker.ready; return await reg.pushManager.getSubscription(); } catch (e) { return null; }
+  }
+  function b64uToBytes(s) { const p = '='.repeat((4 - s.length % 4) % 4); const b = atob((s + p).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(b, (c) => c.charCodeAt(0)); }
+  async function pushOn() {
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { S.pushPerm = perm; throw new Error('Du må trykke «Tillat» for å få varsler.'); }
+    const reg = await navigator.serviceWorker.ready;
+    const key = await api.pushKey();
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(key) });
+    const j = sub.toJSON();
+    await api.savePush(j.endpoint, j.keys.p256dh, j.keys.auth);
+    S.pushOn = true; S.pushPerm = 'granted';
+    toast('Varsler er slått på. 🔔');
+  }
+  async function pushOff(quiet) {
+    if (pushSupport() !== 'ok') return;
+    const sub = await currentSubscription(); if (!sub) { S.pushOn = false; return; }
+    try { await api.removePush(sub.endpoint); } catch (e) { if (!quiet) throw e; }
+    try { await sub.unsubscribe(); } catch (e) { /* tom */ }
+    S.pushOn = false;
+  }
+  // Ved innlogging: knytt telefonen til riktig bruker hvis varsler allerede er på.
+  async function syncPush() {
+    S.notify = Object.assign({}, NOTIFY_DEFAULT, (await api.myNotify().catch(() => null)) || {});
+    if (pushSupport() !== 'ok') return;
+    S.pushPerm = Notification.permission;
+    const sub = await currentSubscription();
+    S.pushOn = !!sub && S.pushPerm === 'granted';
+    if (S.pushOn) { const j = sub.toJSON(); api.savePush(j.endpoint, j.keys.p256dh, j.keys.auth).catch(() => {}); }
+    if (route() === 'info') render();
+  }
+  function viewPushCard() {
+    const sup = pushSupport();
+    let inner;
+    if (sup === 'demo') inner = '<p class="small muted">Varsler virker når appen er koblet til nabolagets database.</p>';
+    else if (sup === 'native') inner = `<p>Varsler virker i nettappen. Åpne <b>raadkawa.github.io/safetly</b> i Chrome, trykk ⋮ og <b>Legg til på startskjermen</b>, og slå på varsler der.</p>`;
+    else if (sup === 'ios-browser') inner = `<p>På iPhone må Safetly ligge på Hjem-skjermen for å få varsler:</p>
+      <ol class="steps"><li>Trykk Del-knappen (firkanten med pil opp) nederst i Safari.</li><li>Velg <b>Legg til på Hjem-skjerm</b>.</li><li>Åpne Safetly fra Hjem-skjermen og slå på varsler her.</li></ol>
+      <p class="small muted">Krever iOS 16.4 eller nyere.</p>`;
+    else if (sup === 'unsupported') inner = '<p class="small">Denne nettleseren støtter ikke varsler. Prøv Chrome på Android, eller Safetly fra Hjem-skjermen på iPhone.</p>';
+    else if (S.pushPerm === 'denied') inner = `<p>Varsler er blokkert for Safetly på denne telefonen.</p>
+      <p class="small muted">iPhone: Innstillinger → Varslinger → Safetly → Tillat varslinger. Android: hold inne Safetly-ikonet → Appinfo → Varsler.</p>`;
+    else if (!S.pushOn) inner = `<p>Få beskjed om nye meldinger og vakter, også når appen er lukket.</p>
+      <button type="button" class="pill self-start" data-act="push-on">${I.bell()}Slå på varsler</button>`;
+    else inner = `<p class="small" style="font-weight:600;color:var(--ok)">✓ Varsler er på for denne telefonen</p>
+      <div>${NOTIFY_TYPES.map(([k, l]) => `<label class="switch-row">${l}<input type="checkbox" role="switch" class="switch" id="nt-${k}" data-change="notify" data-key="${k}"${S.notify && S.notify[k] === false ? '' : ' checked'}></label>`).join('')}</div>
+      <div class="wrap-row"><button type="button" class="pill ghost sm" data-act="push-test">Send testvarsel</button><button type="button" class="link-btn" data-act="push-off">Slå av på denne telefonen</button></div>`;
+    return `<section class="card blue" aria-labelledby="varsler-h"><h2 id="varsler-h" style="font-size:1.25rem">Varsler</h2>${inner}</section>`;
+  }
 
   // ------------------------------------------------------------------ Vakttider (koordinator)
   function currentShifts() { const c = S.settings && S.settings.shifts; return validShifts(c) ? c : DEFAULT_SHIFTS; }
@@ -1388,7 +1469,10 @@
     },
     'pref-big'(el) { S.big = el.checked; savePrefs(); applyPrefs(); },
     'theme'(el) { S.theme = el.dataset.v; savePrefs(); applyPrefs(); render(); },
-    'logout'() { run(async () => { await api.signOut(); }); },
+    'logout'() { run(async () => { await pushOff(true); await api.signOut(); }); },
+    'push-on'() { run(pushOn); },
+    'push-off'() { run(() => pushOff(false), 'Varsler er slått av på denne telefonen.'); },
+    'push-test'() { run(async () => { const r = await api.notify({ type: 'test' }); if (!r || !r.sent) throw new Error('Fant ingen telefon å sende til. Prøv å slå varsler av og på igjen.'); }, 'Testvarsel sendt. Det kommer om noen sekunder.'); },
     'retry'() { S.loaded = false; render(); run(loadAll); },
     'kweek'(el) { S.kontorWeek = addDays(S.kontorWeek, 7 * +el.dataset.dir); run(() => ensureRange(iso(S.kontorWeek), iso(addDays(S.kontorWeek, 7)))); },
     'csv'() { run(exportCsv); },
@@ -1415,7 +1499,8 @@
       toast('Takk! Rapporten vises under vaktrapporter.');
     },
     async news(f) {
-      await api.addNews({ title: f.title.value.trim(), body: f.body.value.trim() });
+      const created = await api.addNews({ title: f.title.value.trim(), body: f.body.value.trim() });
+      if (created && created.id) api.notify({ type: 'news', id: created.id }).catch(() => {});
       f.reset(); S.newsForm = false; S.news = await api.news(); toast('Nyheten er lagt ut.');
     },
     async event(f) {
@@ -1428,6 +1513,7 @@
       const body = f.body.value.trim(); if (!body) return;
       const thread = f.dataset.thread;
       const msg = await api.sendMessage(thread === 'alle' ? null : thread, body);
+      if (msg && msg.id) api.notify({ type: 'message', id: msg.id }).catch(() => {});
       f.body.value = '';
       if (msg && !S.messages.some((x) => x.id === msg.id)) S.messages.push(msg);
       S.reads[thread] = new Date().toISOString(); api.markRead(thread).catch(() => {});
@@ -1462,6 +1548,10 @@
     }
   };
   const changes = {
+    notify(el) {
+      const v = Object.assign({}, S.notify, { [el.dataset.key]: el.checked }); S.notify = v;
+      api.updateNotify(v).then(() => toast('Lagret.')).catch((e) => { toast(errText(e), true); });
+    },
     visit(el) {
       const set = visited(); if (el.checked) set.add(el.dataset.id); else set.delete(el.dataset.id);
       saveVisited(set); updateRound();
@@ -1568,6 +1658,7 @@
     S.loaded = false; render();
     try { await loadAll(); } catch (e) { console.error(e); S.loaded = true; S.loadError = errText(e); }
     render();
+    syncPush().catch(() => {});
     if (stopLive) stopLive();
     try {
       const a = api.onMessage(onIncoming); const b = api.onRead(onReadUpdate);

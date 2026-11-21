@@ -157,6 +157,25 @@ update settings set shifts = '{"slots": [{"name": "Kveld", "start": "20:00", "en
 do $$ begin assert (select shifts->>'min' from settings where id = 1) = '3', 'koordinator kan endre vakttider'; end $$;
 reset role;
 
+-- Push-varsler
+set role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000b', false) \g /dev/null
+select save_push_subscription('https://push.example/abc', 'p256', 'auth1') \g /dev/null
+update profiles set notify = '{"meldinger": false}' where id = auth.uid();
+do $$ begin
+  assert (select count(*) from push_subscriptions) = 1, 'Ola ser sin egen telefon';
+  assert (select notify->>'meldinger' from profiles where id = auth.uid()) = 'false', 'Ola kan endre egne varsler';
+  begin perform count(*) from push_config; raise exception 'SKULLE FEILET: push_config';
+  exception when insufficient_privilege then null; end;
+end $$;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000c', false) \g /dev/null
+do $$ begin assert (select count(*) from push_subscriptions) = 0, 'Per ser ikke Olas telefon'; end $$;
+delete from push_subscriptions;
+select save_push_subscription('https://push.example/abc', 'p256', 'auth2') \g /dev/null
+do $$ begin assert (select count(*) from push_subscriptions) = 1, 'telefonen flyttes til Per når han logger inn'; end $$;
+reset role;
+do $$ begin assert (select user_id from push_subscriptions) = '00000000-0000-0000-0000-00000000000c', 'telefonen tilhører nå Per'; end $$;
+
 -- Anonym: ingen tilgang
 reset role;
 set role anon;

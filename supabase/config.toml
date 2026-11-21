@@ -1,0 +1,5 @@
+# Minimal Supabase-oppsett for å installere varslingstjenesten (supabase functions deploy).
+project_id = "safetly"
+
+[functions.push]
+verify_jwt = false

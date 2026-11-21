@@ -165,6 +165,8 @@ fs.mkdirSync(OUT, { recursive: true });
     await page.getByText('Busstoppet Hallset').first().waitFor();
     await page.getByRole('navigation', { name: 'Hovedmeny' }).getByRole('link', { name: 'Info' }).click();
     step('vaktområde: kart med grense og 5 sjekkpunkter, avkrysning, koordinator la til punkt');
+    await page.getByRole('heading', { name: 'Varsler' }).waitFor();
+    await page.getByText('Varsler virker når appen er koblet til', { exact: false }).waitFor();
     await page.getByRole('button', { name: 'Mørk' }).click();
     if ((await page.evaluate(() => document.documentElement.dataset.theme)) !== 'dark') throw new Error('Mørk modus virket ikke');
     await page.getByRole('switch', { name: 'Større tekst' }).check();

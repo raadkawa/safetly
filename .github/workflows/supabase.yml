@@ -1,0 +1,41 @@
+name: Varslingstjeneste (Supabase)
+
+# Installerer varslingstjenesten (supabase/functions/push) i Supabase.
+# Krever secret SUPABASE_ACCESS_TOKEN (Settings → Secrets and variables → Actions),
+# laget på https://supabase.com/dashboard/account/tokens
+
+on:
+  push:
+    branches: [main]
+    paths: ['supabase/functions/**', '.github/workflows/supabase.yml']
+  workflow_dispatch:
+
+env:
+  PROJECT_REF: ptbyychbijspnchxtkzd
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sjekk nøkkel
+        id: c
+        env:
+          TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          if [ -n "$TOKEN" ]; then echo "ready=true" >> "$GITHUB_OUTPUT"; else echo "ready=false" >> "$GITHUB_OUTPUT"; echo "::notice::Legg inn SUPABASE_ACCESS_TOKEN som secret for å installere varslingstjenesten."; fi
+      - uses: actions/checkout@v5
+        if: steps.c.outputs.ready == 'true'
+      - uses: supabase/setup-cli@v1
+        if: steps.c.outputs.ready == 'true'
+        with:
+          version: latest
+      - name: Installer varslingstjenesten
+        if: steps.c.outputs.ready == 'true'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: supabase functions deploy push --project-ref "$PROJECT_REF" --no-verify-jwt
+      - name: Sjekk at den svarer
+        if: steps.c.outputs.ready == 'true'
+        run: |
+          sleep 5
+          curl -sS -f -X POST "https://$PROJECT_REF.supabase.co/functions/v1/push" -H 'Content-Type: application/json' -d '{"type":"public-key"}' | grep -q publicKey && echo "Varslingstjenesten svarer."
