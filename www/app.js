@@ -5,11 +5,39 @@
   'use strict';
 
   const CFG = window.SAFETLY_CONFIG || {};
-  const MIN_PER_SHIFT = 2;
-  const SLOTS = {
-    1: { start: '21:00', end: '23:00', name: 'Kveldsvakt' },
-    2: { start: '23:00', end: '01:00', name: 'Nattvakt' }
+  // Vakter per kveld. Koordinatorer kan endre dette i Kontor → Vakttider (lagres i settings.shifts).
+  const DEFAULT_SHIFTS = {
+    slots: [{ name: 'Kveldsvakt', start: '21:00', end: '23:00' }, { name: 'Nattvakt', start: '23:00', end: '01:00' }],
+    min: 2, days: [0, 1, 2, 3, 4, 5, 6]
   };
+  const MAX_SLOTS = 4;
+  let MIN_PER_SHIFT = 2; let SLOTS = {}; let SLOT_IDS = []; let ACTIVE_DAYS = new Set();
+  const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+  // Godtar «21:00», «21.00», «2100», «930» og «21» og gjør dem om til TT:MM (24-timersklokke).
+  function normTime(v) {
+    const t = String(v || '').trim();
+    let h, m;
+    const sep = t.match(/^(\d{1,2})\s*[:.,]\s*(\d{1,2})$/);
+    if (sep) { h = +sep[1]; m = +sep[2]; }
+    else if (/^\d{1,4}$/.test(t)) { if (t.length <= 2) { h = +t; m = 0; } else { h = +t.slice(0, t.length - 2); m = +t.slice(-2); } }
+    else return t;
+    if (h === 24) h = 0;
+    return (h < 24 && m < 60) ? `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}` : t;
+  }
+  const timeInput = (id, value, extra) => `<input type="text" inputmode="numeric" autocomplete="off" id="${id}" maxlength="5" placeholder="21:00" value="${esc(value || '')}" ${extra || ''} aria-describedby="tid-hjelp">`;
+  function validShifts(c) {
+    return !!(c && Array.isArray(c.slots) && c.slots.length >= 1 && c.slots.length <= MAX_SLOTS &&
+      c.slots.every((x) => x && TIME_RE.test(x.start) && TIME_RE.test(x.end) && x.start !== x.end) &&
+      Number.isInteger(c.min) && c.min >= 1 && c.min <= 9 && Array.isArray(c.days) && c.days.length >= 1);
+  }
+  function applyShifts(cfg) {
+    const c = validShifts(cfg) ? cfg : DEFAULT_SHIFTS;
+    SLOTS = {}; SLOT_IDS = [];
+    c.slots.forEach((x, i) => { SLOTS[i + 1] = { name: x.name || `Vakt ${i + 1}`, start: x.start, end: x.end }; SLOT_IDS.push(i + 1); });
+    MIN_PER_SHIFT = c.min; ACTIVE_DAYS = new Set(c.days.map(Number));
+  }
+  applyShifts(null);
+  const SLOT_COLORS = ['blue', 'yellow', 'pink', 'blue'];
   const DAYS = ['mandag', 'tirsdag', 'onsdag', 'torsdag', 'fredag', 'lørdag', 'søndag'];
   const DAYS_SHORT = ['Man', 'Tir', 'Ons', 'Tor', 'Fre', 'Lør', 'Søn'];
   const MONTHS = ['januar', 'februar', 'mars', 'april', 'mai', 'juni', 'juli', 'august', 'september', 'oktober', 'november', 'desember'];
@@ -41,9 +69,12 @@
   const fmtShort = (s) => { const d = parseIso(s); return `${DAYS_SHORT[dow(d)].toLowerCase()} ${d.getDate()}. ${MONTHS[d.getMonth()].slice(0, 3)}`; };
   const fmtTime = (t) => String(t || '').slice(0, 5);
   const fmtStamp = (ts) => { const d = new Date(ts); return `${fmtShort(iso(d))} kl. ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
-  function shiftStart(date, slot) { const d = parseIso(date); d.setHours(slot === 1 ? 21 : 23, 0, 0, 0); return d; }
-  function shiftEnd(date, slot) { const d = parseIso(date); if (slot === 1) d.setHours(23, 0, 0, 0); else { d.setDate(d.getDate() + 1); d.setHours(1, 0, 0, 0); } return d; }
-  const shiftLabel = (date, slot) => `${cap(fmtDay(date))}, ${SLOTS[slot].start}–${SLOTS[slot].end}`;
+  const slotInfo = (slot) => SLOTS[slot] || { name: 'Vakt', start: '21:00', end: '23:00' };
+  // En vakt som starter før kl. 12 regnes som natt til neste dag (f.eks. 00:30–02:00).
+  function shiftStart(date, slot) { const [h, m] = slotInfo(slot).start.split(':').map(Number); const d = parseIso(date); if (h < 12) d.setDate(d.getDate() + 1); d.setHours(h, m, 0, 0); return d; }
+  function shiftEnd(date, slot) { const st = shiftStart(date, slot); const [h, m] = slotInfo(slot).end.split(':').map(Number); const d = new Date(st); d.setHours(h, m, 0, 0); if (d <= st) d.setDate(d.getDate() + 1); return d; }
+  const shiftLabel = (date, slot) => `${cap(fmtDay(date))}, ${slotInfo(slot).start}–${slotInfo(slot).end}`;
+  const slotsOn = (date) => (ACTIVE_DAYS.has(dow(parseIso(date))) ? SLOT_IDS : []);
   function initials(name) { const p = String(name || '?').trim().split(/\s+/); return ((p[0] || '?')[0] + (p.length > 1 ? p[p.length - 1][0] : '')).toUpperCase(); }
   function shortName(name) { const p = String(name || '').trim().split(/\s+/); if (!p[0]) return 'Uten navn'; return p.length > 1 ? `${p[0]} ${p[p.length - 1][0]}.` : p[0]; }
   const telHref = (phone) => 'tel:' + String(phone || '').replace(/[^\d+]/g, '');
@@ -127,9 +158,11 @@
       async updateName(name) { ok(await sb.from('profiles').update({ full_name: name }).eq('id', userId)); },
       async updatePhone(phone) { ok(await sb.from('private_contacts').upsert({ user_id: userId, phone })); },
       async settings() {
-        const r = await sb.from('settings').select('meeting_name,meeting_address,meeting_note,map').eq('id', 1).maybeSingle();
-        if (!r.error) return r.data;
-        return ok(await sb.from('settings').select('meeting_name,meeting_address,meeting_note').eq('id', 1).maybeSingle());
+        // Prøv med alle kolonner først; eldre databaser mangler kanskje map eller shifts.
+        const tries = ['meeting_name,meeting_address,meeting_note,map,shifts', 'meeting_name,meeting_address,meeting_note,map', 'meeting_name,meeting_address,meeting_note'];
+        let last;
+        for (const cols of tries) { const r = await sb.from('settings').select(cols).eq('id', 1).maybeSingle(); if (!r.error) return r.data; last = r.error; }
+        throw last;
       },
       async updateSettings(v) {
         const rows = ok(await sb.from('settings').update(Object.assign({ updated_at: new Date().toISOString() }, v)).eq('id', 1).select('id'));
@@ -327,7 +360,7 @@
     range: null,
     weekStart: weekStart(today()), selDay: iso(today()), repeat: false,
     cal: { y: today().getFullYear(), m: today().getMonth() }, calSel: iso(today()),
-    eventForm: false, newsForm: false, meetingForm: false, settings: null, mapEdit: false, mapDraft: null, mapAdd: false, mapDraw: false, mapView: null, kontorWeek: weekStart(today()),
+    eventForm: false, newsForm: false, meetingForm: false, shiftDraft: null, settings: null, mapEdit: false, mapDraft: null, mapAdd: false, mapDraw: false, mapView: null, kontorWeek: weekStart(today()),
     theme: prefs.theme || 'auto', big: !!prefs.big,
     busy: false, lastRoute: null, backRoute: '#/vakter',
     messages: [], reads: {}, chatBottom: false, peerReads: {}, alleReads: []
@@ -348,7 +381,10 @@
   const nameOf = (id) => (id === (S.user && S.user.id) ? 'Deg' : shortName((S.profiles[id] || {}).full_name));
   function shiftPeople(date, slot) { return S.bookings.filter((b) => b.shift_date === date && b.slot === slot); }
   function myBooking(date, slot) { return S.bookings.find((b) => b.shift_date === date && b.slot === slot && b.user_id === S.user.id); }
-  function covered(date) { return shiftPeople(date, 1).length >= MIN_PER_SHIFT && shiftPeople(date, 2).length >= MIN_PER_SHIFT; }
+  function covered(date) { const ids = slotsOn(date); return ids.length > 0 && ids.every((s) => shiftPeople(date, s).length >= MIN_PER_SHIFT); }
+  // 'none' = ingen vakt denne dagen, 'ok' = alle vakter dekket, 'warn' = trenger flere
+  function dayStatus(date) { return !slotsOn(date).length ? 'none' : covered(date) ? 'ok' : 'warn'; }
+  const STATUS_TEXT = { none: 'ingen vakt', ok: 'dekket', warn: 'trenger flere' };
 
   // ------------------------------------------------------------------ lasting av data
   async function loadAll() {
@@ -489,7 +525,7 @@
     const now = new Date(); const out = [];
     for (let i = 0; i < days; i++) {
       const date = iso(addDays(today(), i));
-      [1, 2].forEach((slot) => { if (shiftEnd(date, slot) > now && shiftPeople(date, slot).length < MIN_PER_SHIFT) out.push({ date, slot }); });
+      slotsOn(date).forEach((slot) => { if (shiftEnd(date, slot) > now && shiftPeople(date, slot).length < MIN_PER_SHIFT) out.push({ date, slot }); });
     }
     return out;
   }
@@ -510,7 +546,7 @@
       const isToday = next.shift_date === t;
       html += `<section class="card blue" aria-labelledby="neste">
         <h2 id="neste" class="eyebrow">Din neste vakt</h2>
-        <div class="stack-s"><p class="big-num">${SLOTS[next.slot].start}–${SLOTS[next.slot].end}</p><p style="font-weight:600;font-size:1.0625rem">${isToday ? 'I kveld · ' : ''}${cap(fmtDay(next.shift_date))}</p></div>
+        <div class="stack-s"><p class="big-num">${slotInfo(next.slot).start}–${slotInfo(next.slot).end}</p><p style="font-weight:600;font-size:1.0625rem">${isToday ? 'I kveld · ' : ''}${cap(fmtDay(next.shift_date))}</p></div>
         <p class="muted">${partners.length ? `Du går sammen med <b style="color:var(--ink)">${esc(partners.join(' og '))}</b>` : '<b style="color:var(--ink)">Ingen andre er påmeldt ennå.</b>'} · Oppmøte: ${esc(meeting().name || 'se Info')}</p>
         <div class="wrap-row"><a class="pill sm" href="#/info">Slik går en vakt</a><button type="button" class="pill ghost sm" data-act="unbook" data-id="${next.id}" data-label="${esc(shiftLabel(next.shift_date, next.slot))}">Avbook</button>
         <a class="pill ghost sm" href="#/kart">${I.map(18)}Kart</a>
@@ -536,20 +572,21 @@
         <button type="button" class="icon-btn" data-act="week" data-dir="0" aria-label="Denne uka" style="width:auto;padding:0 .875rem;font-weight:600;font-size:.875rem">I dag</button>
         <button type="button" class="icon-btn" data-act="week" data-dir="1" aria-label="Neste uke">${I.right()}</button></div></div>
       <div class="days">${days.map((d, i) => {
-        const ok = covered(d); const dd = parseIso(d);
-        return `<button type="button" id="day-${d}" class="day${d === t ? ' today' : ''}" data-act="sel-day" data-date="${d}" aria-pressed="${d === S.selDay}"
-          aria-label="${cap(fmtDay(d))}: ${ok ? 'dekket' : 'trenger flere'}${d === t ? ', i dag' : ''}"><span>${DAYS_SHORT[i]}</span><span class="num">${dd.getDate()}</span><span class="mark ${ok ? 'ok' : 'warn'}"></span></button>`;
+        const st = dayStatus(d); const dd = parseIso(d);
+        return `<button type="button" id="day-${d}" class="day${d === t ? ' today' : ''}${st === 'none' ? ' off' : ''}" data-act="sel-day" data-date="${d}" aria-pressed="${d === S.selDay}"
+          aria-label="${cap(fmtDay(d))}: ${STATUS_TEXT[st]}${d === t ? ', i dag' : ''}"><span>${DAYS_SHORT[i]}</span><span class="num">${dd.getDate()}</span><span class="mark ${st}"></span></button>`;
       }).join('')}</div>
       <ul class="legend" aria-hidden="true"><li><span class="mark ok"></span>Dekket</li><li><span class="mark warn"></span>Trenger flere</li><li>Minst ${MIN_PER_SHIFT} voksne per vakt</li></ul>
     </section>`;
 
     const d = S.selDay;
     html += `<section class="stack" aria-labelledby="dagtittel"><h2 id="dagtittel">${cap(fmtDay(d))}${d === t ? ' · i dag' : ''}</h2><div class="timeline">`;
-    [1, 2].forEach((slot) => {
+    if (!slotsOn(d).length) html += `<p class="empty">Det er ingen vakter på ${DAYS[dow(parseIso(d))]}er.</p>`;
+    slotsOn(d).forEach((slot) => {
       const list = shiftPeople(d, slot);
-      html += `<div class="tl-item"><div class="tl-time" aria-hidden="true"><b>${SLOTS[slot].start}</b><span class="tl-line"></span><span>${SLOTS[slot].end}</span></div>
-        <article class="card ${slot === 1 ? 'blue' : 'yellow'}" style="padding:1.125rem;border-radius:1.75rem" aria-label="${SLOTS[slot].name} ${SLOTS[slot].start} til ${SLOTS[slot].end}">
-          <div class="between"><h3>${SLOTS[slot].name}</h3>${statusBadge(list.length)}</div>
+      html += `<div class="tl-item"><div class="tl-time" aria-hidden="true"><b>${slotInfo(slot).start}</b><span class="tl-line"></span><span>${slotInfo(slot).end}</span></div>
+        <article class="card ${SLOT_COLORS[slot - 1]}" style="padding:1.125rem;border-radius:1.75rem" aria-label="${slotInfo(slot).name} ${slotInfo(slot).start} til ${slotInfo(slot).end}">
+          <div class="between"><h3>${slotInfo(slot).name}</h3>${statusBadge(list.length)}</div>
           <p class="small muted">Går sammen (${list.length} av minst ${MIN_PER_SHIFT})</p>
           <ul class="people">${personChips(list)}</ul>
           ${bookButtons(d, slot)}
@@ -571,17 +608,18 @@
     for (let i = 0; i < dow(first); i++) cells += '<span aria-hidden="true"></span>';
     for (let n = 1; n <= daysIn; n++) {
       const d = iso(new Date(y, m, n));
-      const ok = covered(d); const ev = evByDate[d];
+      const st = dayStatus(d); const ev = evByDate[d];
       const past = d < t;
       cells += `<button type="button" id="c-${d}" class="cell${d === t ? ' today' : ''}${past ? ' past' : ''}" data-act="cal-sel" data-date="${d}" aria-pressed="${d === S.calSel}"
-        aria-label="${cap(fmtDay(d))}: ${ok ? 'dekket' : 'trenger flere'}${ev ? ', ' + ev.length + ' arrangement' : ''}${d === t ? ', i dag' : ''}">
-        <span>${n}</span><span class="dots" aria-hidden="true"><span class="mark ${ok ? 'ok' : 'warn'}"></span>${ev ? '<span class="mark event"></span>' : ''}</span></button>`;
+        aria-label="${cap(fmtDay(d))}: ${STATUS_TEXT[st]}${ev ? ', ' + ev.length + ' arrangement' : ''}${d === t ? ', i dag' : ''}">
+        <span>${n}</span><span class="dots" aria-hidden="true">${st === 'none' ? '' : `<span class="mark ${st}"></span>`}${ev ? '<span class="mark event"></span>' : ''}</span></button>`;
     }
     const sel = S.calSel;
     let panel = `<section class="stack" aria-labelledby="valgt"><h2 id="valgt">${cap(fmtDay(sel))}${sel === t ? ' · i dag' : ''}</h2>`;
-    [1, 2].forEach((slot) => {
+    if (!slotsOn(sel).length) panel += `<p class="empty">Ingen vakter denne dagen.</p>`;
+    slotsOn(sel).forEach((slot) => {
       const list = shiftPeople(sel, slot);
-      panel += `<div class="card ${slot === 1 ? 'blue' : 'yellow'} tight"><div class="between"><p style="font-weight:700;font-size:1.0625rem">${SLOTS[slot].start}–${SLOTS[slot].end}</p>${statusBadge(list.length)}</div>
+      panel += `<div class="card ${SLOT_COLORS[slot - 1]} tight"><div class="between"><p style="font-weight:700;font-size:1.0625rem">${slotInfo(slot).start}–${slotInfo(slot).end}</p>${statusBadge(list.length)}</div>
         <ul class="people">${personChips(list)}</ul>${bookButtons(sel, slot, true)}</div>`;
     });
     (evByDate[sel] || []).forEach((e) => {
@@ -637,7 +675,7 @@
     html += '</section><section class="stack" aria-labelledby="rapporter"><h2 id="rapporter">Vaktrapporter</h2>';
     if (!S.reports.length) html += '<p class="empty">Ingen vaktrapporter ennå.</p>';
     S.reports.forEach((r) => {
-      html += `<article class="card tight"><div class="between"><p class="small"><b>${esc(cap(fmtShort(r.shift_date)))} · ${SLOTS[r.slot].start}–${SLOTS[r.slot].end}</b></p>${moodBadge(r.mood)}</div>
+      html += `<article class="card tight"><div class="between"><p class="small"><b>${esc(cap(fmtShort(r.shift_date)))} · ${slotInfo(r.slot).start}–${slotInfo(r.slot).end}</b></p>${moodBadge(r.mood)}</div>
         ${r.note ? `<p class="pre">${esc(r.note)}</p>` : '<p class="small muted">Ingen notat.</p>'}</article>`;
     });
     return html + '</section>';
@@ -654,7 +692,8 @@
       html += `<form class="card" data-form="event" aria-labelledby="nyttarr"><h2 id="nyttarr">Nytt arrangement</h2>
         <label class="field">Tittel<input id="e-title" name="title" required maxlength="120" placeholder="F.eks. Refleksvandring"></label>
         <div class="grid-2"><label class="field">Dato<input id="e-date" name="date" type="date" required min="${t}"></label>
-        <label class="field">Tid<input id="e-time" name="time" type="time" required step="300"></label></div>
+        <label class="field">Tid${timeInput('e-time', '', 'name="time" required')}</label></div>
+        <p class="small muted" id="tid-hjelp">Tid skrives med 24-timersklokke, for eksempel 18:30.</p>
         <label class="field">Sted<input id="e-place" name="place" required maxlength="120" placeholder="F.eks. Torget"></label>
         <label class="field">Beskrivelse<textarea id="e-desc" name="description" maxlength="1000" rows="3"></textarea></label>
         <div class="wrap-row"><button type="submit" class="pill">Opprett</button><button type="button" class="pill ghost" data-act="toggle-event">Avbryt</button></div></form>`;
@@ -752,18 +791,19 @@
     if (!open.length) html += '<p>Alle vakter de neste 14 dagene er dekket.</p>';
     open.forEach(({ date, slot }) => {
       const list = shiftPeople(date, slot);
-      html += `<div class="card tight"><div class="between"><p style="font-weight:700">${esc(cap(fmtShort(date)))} · ${SLOTS[slot].start}–${SLOTS[slot].end}</p><span class="badge warn">Trenger ${MIN_PER_SHIFT - list.length} til</span></div>
+      html += `<div class="card tight"><div class="between"><p style="font-weight:700">${esc(cap(fmtShort(date)))} · ${slotInfo(slot).start}–${slotInfo(slot).end}</p><span class="badge warn">Trenger ${MIN_PER_SHIFT - list.length} til</span></div>
         <ul class="people">${personChips(list, { removable: true })}</ul></div>`;
     });
     html += '</section>';
 
+    html += viewShiftEditor();
     html += '<section class="card blue" aria-labelledby="dekning"><h2 id="dekning" style="font-size:1.25rem">Dekning uke for uke</h2>';
     for (let w = 0; w < 4; w++) {
-      const start = addDays(ws, w * 7); let ok = 0;
-      for (let i = 0; i < 7; i++) { const d = iso(addDays(start, i)); [1, 2].forEach((s) => { if (shiftPeople(d, s).length >= MIN_PER_SHIFT) ok++; }); }
-      const pct = Math.round(ok / 14 * 100);
-      html += `<div class="stack-s"><div class="between small"><b>Uke ${isoWeek(start)}</b><span>${ok} av 14 vakter dekket</span></div>
-        <div class="bar" role="img" aria-label="Uke ${isoWeek(start)}: ${ok} av 14 vakter dekket"><span style="width:${pct}%"></span></div></div>`;
+      const start = addDays(ws, w * 7); let ok = 0; let total = 0;
+      for (let i = 0; i < 7; i++) { const d = iso(addDays(start, i)); slotsOn(d).forEach((s) => { total++; if (shiftPeople(d, s).length >= MIN_PER_SHIFT) ok++; }); }
+      const pct = total ? Math.round(ok / total * 100) : 0;
+      html += `<div class="stack-s"><div class="between small"><b>Uke ${isoWeek(start)}</b><span>${ok} av ${total} vakter dekket</span></div>
+        <div class="bar" role="img" aria-label="Uke ${isoWeek(start)}: ${ok} av ${total} vakter dekket"><span style="width:${pct}%"></span></div></div>`;
     }
     html += '</section>';
 
@@ -772,9 +812,9 @@
       <div class="week-nav"><button type="button" class="icon-btn" data-act="kweek" data-dir="-1" aria-label="Forrige uke">${I.left()}</button><button type="button" class="icon-btn" data-act="kweek" data-dir="1" aria-label="Neste uke">${I.right()}</button></div></div><div>`;
     for (let i = 0; i < 7; i++) {
       const d = iso(addDays(kw, i));
-      [1, 2].forEach((slot) => {
+      slotsOn(d).forEach((slot) => {
         const list = shiftPeople(d, slot);
-        html += `<div class="list-row" style="flex-direction:column;align-items:stretch"><div class="between"><span class="small"><b>${esc(cap(fmtShort(d)))}</b> · ${SLOTS[slot].start}–${SLOTS[slot].end}</span>${statusBadge(list.length)}</div>
+        html += `<div class="list-row" style="flex-direction:column;align-items:stretch"><div class="between"><span class="small"><b>${esc(cap(fmtShort(d)))}</b> · ${slotInfo(slot).start}–${slotInfo(slot).end}</span>${statusBadge(list.length)}</div>
           <ul class="people">${personChips(list, { removable: true })}</ul></div>`;
       });
     }
@@ -1003,6 +1043,43 @@
   }
 
 
+
+  // ------------------------------------------------------------------ Vakttider (koordinator)
+  function currentShifts() { const c = S.settings && S.settings.shifts; return validShifts(c) ? c : DEFAULT_SHIFTS; }
+  const slotKey = () => 'k' + Math.random().toString(36).slice(2, 8);
+  function viewShiftEditor() {
+    const c = currentShifts();
+    if (!S.shiftDraft) {
+      return `<section class="card pink" aria-labelledby="vt"><div class="between"><h2 id="vt" style="font-size:1.25rem">Vakttider</h2>
+        <button type="button" class="pill ghost sm" data-act="shift-edit">${I.pen()}Endre</button></div>
+        <ul class="stack-s" style="list-style:none;margin:0;padding:0">${c.slots.map((x) => `<li class="between"><b>${esc(x.name)}</b><span>${esc(x.start)}–${esc(x.end)}</span></li>`).join('')}</ul>
+        <p class="small">Minst ${c.min} ${c.min === 1 ? 'voksen' : 'voksne'} per vakt · ${c.days.length === 7 ? 'alle dager' : c.days.slice().sort().map((d) => DAYS_SHORT[d].toLowerCase()).join(', ')}</p></section>`;
+    }
+    const d = S.shiftDraft;
+    return `<form class="card pink" data-form="shifts" aria-labelledby="vt"><h2 id="vt" style="font-size:1.25rem">Vakttider</h2>
+      <p class="small" id="tid-hjelp">Klokkeslett skrives med 24-timersklokke, for eksempel 21:00 eller 2300.</p>
+      <p class="small">Endringene gjelder for alle med en gang. Bookinger følger vakten de er på (vakt 1, 2 …), så sjekk dem hvis du fjerner en vakt.</p>
+      ${d.slots.map((x, i) => `<fieldset class="slot-edit"><legend>Vakt ${i + 1}</legend>
+        <label class="field">Navn<input id="sl-name-${x.key}" maxlength="30" required value="${esc(x.name)}"></label>
+        <div class="grid-2"><label class="field">Fra${timeInput('sl-start-' + x.key, x.start, 'required')}</label>
+        <label class="field">Til${timeInput('sl-end-' + x.key, x.end, 'required')}</label></div>
+        ${d.slots.length > 1 ? `<button type="button" class="link-btn self-start" data-act="slot-del" data-key="${x.key}">Fjern vakt ${i + 1}</button>` : ''}</fieldset>`).join('')}
+      ${d.slots.length < MAX_SLOTS ? `<button type="button" class="pill ghost sm self-start" data-act="slot-add">${I.plus()}Legg til vakt</button>` : ''}
+      <label class="field">Minst antall voksne per vakt<select id="sl-min">${[1, 2, 3, 4, 5].map((n) => `<option value="${n}"${n === d.min ? ' selected' : ''}>${n}</option>`).join('')}</select></label>
+      <fieldset><legend>Dager med vakt</legend><div class="day-picks">${DAYS_SHORT.map((n, i) => `<label class="day-pick"><input type="checkbox" id="sl-day-${i}" value="${i}"${d.days.includes(i) ? ' checked' : ''}><span>${n}</span></label>`).join('')}</div></fieldset>
+      <div class="wrap-row"><button type="submit" class="pill">Lagre vakttider</button><button type="button" class="pill ghost" data-act="shift-cancel">Avbryt</button></div>
+    </form>`;
+  }
+  function readShiftInputs() {
+    const d = S.shiftDraft; if (!d) return;
+    d.slots.forEach((x) => {
+      const n = document.getElementById('sl-name-' + x.key); const a = document.getElementById('sl-start-' + x.key); const b = document.getElementById('sl-end-' + x.key);
+      if (n) x.name = n.value.trim(); if (a) x.start = normTime(a.value); if (b) x.end = normTime(b.value);
+    });
+    const m = $('#sl-min'); if (m) d.min = +m.value;
+    const days = [...document.querySelectorAll('[id^="sl-day-"]')]; if (days.length) d.days = days.filter((c) => c.checked).map((c) => +c.value);
+  }
+
   // ------------------------------------------------------------------ Vaktområde (kart)
   const TILE_URL = 'https://cache.kartverket.no/v1/wmts/1.0.0/topograatone/default/webmercator/{z}/{y}/{x}.png';
   let MAP = null; let LAYERS = null; let ME = null;
@@ -1157,6 +1234,7 @@
   // ------------------------------------------------------------------ tegning
   const VIEWS = { kart: viewKart, chat: viewChat, vakter: viewVakter, kalender: viewKalender, nyheter: viewNyheter, arrangement: viewArrangement, info: viewInfo, kontor: viewKontor };
   function render() {
+    applyShifts(S.settings && S.settings.shifts);
     const app = $('#app');
     const r = route();
     const key = routeKey();
@@ -1285,6 +1363,17 @@
         S.mapEdit = false; S.mapDraft = null;
       }, 'Kartet er lagret for alle.');
     },
+    'shift-edit'() { const c = currentShifts(); S.shiftDraft = { slots: c.slots.map((x) => Object.assign({ key: slotKey() }, x)), min: c.min, days: c.days.slice() }; render(); const f = $('[id^="sl-name-"]'); if (f) f.focus(); },
+    'shift-cancel'() { S.shiftDraft = null; render(); },
+    'slot-add'() {
+      readShiftInputs(); const d = S.shiftDraft; const last = d.slots[d.slots.length - 1];
+      d.slots.push({ key: slotKey(), name: `Vakt ${d.slots.length + 1}`, start: last ? last.end : '21:00', end: '' }); render();
+      const n = document.getElementById('sl-end-' + d.slots[d.slots.length - 1].key); if (n) n.focus();
+    },
+    'slot-del'(el) {
+      readShiftInputs(); const d = S.shiftDraft; const i = d.slots.findIndex((x) => x.key === el.dataset.key);
+      if (i >= 0 && confirm(`Fjerne «${d.slots[i].name}»?`)) { d.slots.splice(i, 1); render(); }
+    },
     'map-default'() {
       if (!confirm('Gå tilbake til standardkartet? Endringene dere har lagret forsvinner.')) return;
       run(async () => { await api.updateSettings({ map: null }); S.settings = await api.settings(); S.mapEdit = false; S.mapDraft = null; }, 'Standardkartet brukes igjen.');
@@ -1330,7 +1419,9 @@
       f.reset(); S.newsForm = false; S.news = await api.news(); toast('Nyheten er lagt ut.');
     },
     async event(f) {
-      await api.addEvent({ title: f.title.value.trim(), event_date: f.date.value, event_time: f.time.value, place: f.place.value.trim(), description: f.description.value.trim() });
+      const time = normTime(f.time.value);
+      if (!TIME_RE.test(time)) throw new Error('Skriv tiden som TT:MM, for eksempel 18:30.');
+      await api.addEvent({ title: f.title.value.trim(), event_date: f.date.value, event_time: time, place: f.place.value.trim(), description: f.description.value.trim() });
       f.reset(); S.eventForm = false; await reloadEvents(); toast('Arrangementet er opprettet.');
     },
     async chat(f) {
@@ -1341,6 +1432,19 @@
       if (msg && !S.messages.some((x) => x.id === msg.id)) S.messages.push(msg);
       S.reads[thread] = new Date().toISOString(); api.markRead(thread).catch(() => {});
       S.chatBottom = true;
+    },
+    async shifts() {
+      readShiftInputs();
+      const d = S.shiftDraft;
+      const cfg = { slots: d.slots.map((x) => ({ name: x.name || 'Vakt', start: x.start, end: x.end })), min: d.min, days: d.days.slice().sort() };
+      if (!cfg.days.length) throw new Error('Velg minst én dag med vakt.');
+      if (cfg.slots.some((x) => !TIME_RE.test(x.start) || !TIME_RE.test(x.end))) throw new Error('Fyll inn klokkeslett for alle vaktene (TT:MM).');
+      if (cfg.slots.some((x) => x.start === x.end)) throw new Error('En vakt kan ikke starte og slutte på samme klokkeslett.');
+      await api.updateSettings({ shifts: cfg });
+      S.settings = await api.settings();
+      if (!S.settings || !validShifts(S.settings.shifts)) throw new Error('Vakttidene kunne ikke lagres. Er vakttider.sql kjørt i databasen?');
+      S.shiftDraft = null;
+      toast('Vakttidene er lagret for alle.');
     },
     async meeting(f) {
       await api.updateSettings({ meeting_name: f.mname.value.trim(), meeting_address: f.maddress.value.trim(), meeting_note: f.mnote.value.trim() });
@@ -1382,12 +1486,12 @@
     const rows = [['Dato', 'Ukedag', 'Uke', 'Vakt', 'Start', 'Slutt', 'Påmeldt', 'Status', 'Navn', 'Telefon']];
     for (let i = 0; i < 28; i++) {
       const date = addDays(start, i); const d = iso(date);
-      [1, 2].forEach((slot) => {
+      slotsOn(d).forEach((slot) => {
         const list = shiftPeople(d, slot);
         const names = list.map((b) => (S.profiles[b.user_id] || {}).full_name || '');
         const phones = list.map((b) => S.phones[b.user_id] || '');
-        rows.push([`${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${date.getFullYear()}`, cap(DAYS[dow(date)]), isoWeek(date), SLOTS[slot].name,
-          SLOTS[slot].start, SLOTS[slot].end, list.length, list.length >= MIN_PER_SHIFT ? 'Dekket' : 'Trenger flere', names.join(', '), phones.join(', ')]);
+        rows.push([`${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${date.getFullYear()}`, cap(DAYS[dow(date)]), isoWeek(date), slotInfo(slot).name,
+          slotInfo(slot).start, slotInfo(slot).end, list.length, list.length >= MIN_PER_SHIFT ? 'Dekket' : 'Trenger flere', names.join(', '), phones.join(', ')]);
       });
     }
     const text = '﻿' + rows.map((r) => r.map(csvCell).join(';')).join('\r\n');

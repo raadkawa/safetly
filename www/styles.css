@@ -347,3 +347,16 @@ legend { font-weight: 700; font-size: .9375rem; padding: 0; margin-bottom: .5rem
 .cp-check:has(input:checked) .cp-num { background: #1E6A43; }
 .cp-check:has(input:checked) b { text-decoration: line-through; text-decoration-thickness: 2px; color: var(--muted); }
 .cp-edit { gap: .625rem; }
+
+/* Vakttider */
+.mark.none { visibility: hidden; }
+.day.off { background: transparent; color: var(--muted); box-shadow: inset 0 0 0 1.5px var(--line); }
+.day.off.today { box-shadow: inset 0 0 0 2px var(--ink); }
+.slot-edit { background: var(--surface); border-radius: 1.25rem; padding: .875rem 1rem; gap: .625rem; }
+.slot-edit legend { float: left; width: 100%; margin-bottom: .25rem; }
+.day-picks { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: .25rem; }
+.day-pick { position: relative; display: block; cursor: pointer; }
+.day-pick input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.day-pick span { display: grid; place-items: center; min-height: 2.75rem; border-radius: .875rem; background: var(--surface); font-weight: 700; font-size: .8125rem; }
+.day-pick input:checked + span { background: var(--ink); color: var(--bg); }
+.day-pick input:focus-visible + span { outline: 3px solid var(--focus); outline-offset: 2px; }

@@ -140,6 +140,23 @@ update settings set map = '{"name": "Test", "area": [[63.39,10.35],[63.40,10.36]
 do $$ begin assert (select map->>'name' from settings where id = 1) = 'Test', 'koordinator kan endre kartet'; end $$;
 reset role;
 
+-- Vakttider
+set role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000b', false) \g /dev/null
+update settings set shifts = '{"slots": [], "min": 1, "days": [4]}' where id = 1;
+do $$ begin assert (select shifts from settings where id = 1) is null, 'forelder skal ikke endre vakttider'; end $$;
+insert into bookings (user_id, shift_date, slot) values (auth.uid(), current_date + 1, 3);
+do $$ begin
+  begin
+    insert into bookings (user_id, shift_date, slot) values (auth.uid(), current_date + 1, 5);
+    raise exception 'SKULLE FEILET: vakt 5';
+  exception when check_violation then null; end;
+end $$;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a', false) \g /dev/null
+update settings set shifts = '{"slots": [{"name": "Kveld", "start": "20:00", "end": "22:00"}], "min": 3, "days": [4, 5]}' where id = 1;
+do $$ begin assert (select shifts->>'min' from settings where id = 1) = '3', 'koordinator kan endre vakttider'; end $$;
+reset role;
+
 -- Anonym: ingen tilgang
 reset role;
 set role anon;

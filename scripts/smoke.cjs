@@ -180,6 +180,32 @@ fs.mkdirSync(OUT, { recursive: true });
     const csv = fs.readFileSync(await download.path(), 'utf8');
     if (!csv.includes('Dato;Ukedag;Uke;Vakt')) throw new Error('CSV mangler overskrift');
     step(`kontor: fjern fra vakt, rolle endret, CSV (${csv.split('\n').length - 1} vakter)`);
+    // Vakttider
+    const vt = page.locator('section:has(#vt), form:has(#vt)');
+    await vt.getByRole('button', { name: 'Endre' }).click();
+    await page.locator('[id^="sl-start-"]').first().fill('20:00');
+    await page.locator('[id^="sl-end-"]').first().fill('22:00');
+    await page.getByRole('button', { name: 'Fjern vakt 2' }).click();
+    await page.getByLabel('Minst antall voksne per vakt').selectOption('3');
+    for (const d of ['Man', 'Tir', 'Ons', 'Tor', 'Søn']) await page.locator('label.day-pick', { hasText: d }).click();
+    await shot('08b-vakttider');
+    await page.getByRole('button', { name: 'Lagre vakttider' }).click();
+    await page.getByText('Vakttidene er lagret for alle.').waitFor();
+    await page.getByText('20:00–22:00', { exact: true }).waitFor();
+    await page.getByText(/Minst 3 voksne per vakt · fre, lør/).waitFor();
+    await page.getByRole('navigation', { name: 'Hovedmeny' }).getByRole('link', { name: 'Vakter' }).click();
+    await page.locator('.days').waitFor();
+    { const n = await page.locator('.day.off').count(); if (n !== 5) throw new Error('dager uten vakt vises ikke som fri: ' + n + ' ' + (await page.locator('.days').innerHTML()).slice(0, 400)); }
+    const fri = page.locator('.day:not(.off)').first();
+    await fri.click();
+    await page.locator('.tl-time b', { hasText: '20:00' }).waitFor();
+    await page.getByText('av minst 3').first().waitFor();
+    if ((await page.locator('.tl-item').count()) !== 1) throw new Error('skal bare være én vakt per kveld');
+    await page.locator('.day.off').first().click();
+    await page.getByText(/Det er ingen vakter på/).waitFor();
+    await page.getByRole('navigation', { name: 'Hovedmeny' }).getByRole('link', { name: 'Info' }).click();
+    await page.getByRole('link', { name: 'Kontor for koordinatorer' }).click();
+    step('vakttider: én vakt 20–22, bare fredag og lørdag, minst 3 voksne');
     await shot('08-kontor');
 
     // Nødhjelp

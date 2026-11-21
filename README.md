@@ -2,7 +2,7 @@
 
 Norsk, mobilvennlig app for natteravner i nabolaget. Foreldre kobles sammen for et tryggere nærmiljø.
 
-- **Vakter:** to vakter per kveld (21–23 og 23–01), minst to voksne per vakt. Book og avbook, gjenta vakten 4 uker frem, se hvem du går sammen med, ukestatus, «Din neste vakt» og varsel om vakter som trenger folk.
+- **Vakter:** som standard to vakter per kveld (21–23 og 23–01) og minst to voksne per vakt. Koordinatorer endrer klokkeslett, antall vakter (1–4), minst antall voksne og hvilke dager det er vakt under Kontor → Vakttider. Book og avbook, gjenta vakten 4 uker frem, se hvem du går sammen med, ukestatus, «Din neste vakt» og varsel om vakter som trenger folk.
 - **Kalender:** månedsvisning med prikker for dekning og arrangement. Trykk på en dag for å se og booke.
 - **Ukas nyheter:** koordinatorer legger ut, alle leser. **Vaktrapporter** («Rolig kveld», «Noe uro», «Trengte hjelp» + kort notat uten navn på barn) vises under nyhetene.
 - **Arrangement:** alle kan opprette og trykke «Jeg kommer».
@@ -46,7 +46,7 @@ npm start
 4. Under **Authentication → URL Configuration**: sett **Site URL** til adressen der nettappen ligger, og legg den til under **Redirect URLs**.
 5. Hent **Project URL** og **anon public key** fra **Project Settings → API**, og fyll dem inn i `www/config.js`. Fyll også inn `siteUrl` og oppmøtestedet.
 
-Har du kjørt `schema.sql` før meldinger og redigerbart oppmøtested kom, kjører du i tillegg `supabase/oppmotested.sql`, `supabase/chat.sql`, `supabase/lest.sql` og `supabase/kart.sql`.
+Har du kjørt `schema.sql` før meldinger og redigerbart oppmøtested kom, kjører du i tillegg `supabase/oppmotested.sql`, `supabase/chat.sql`, `supabase/lest.sql`, `supabase/kart.sql` og `supabase/vakttider.sql`.
 
 Den **første** kontoen som opprettes blir koordinator. Alle andre blir foreldre, og en koordinator kan endre roller i Kontor.
 
