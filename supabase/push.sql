@@ -57,6 +57,10 @@ revoke all on public.push_config, public.push_log from anon, authenticated;
 revoke all on public.push_subscriptions from anon;
 grant select, delete on public.push_subscriptions to authenticated;
 
+-- Varslingstjenesten (service_role) må kunne lese og skrive det den trenger.
+grant select, insert, update, delete on public.push_config, public.push_log, public.push_subscriptions to service_role;
+grant select on public.profiles, public.messages, public.news, public.bookings, public.settings to service_role;
+
 -- Påminnelser før vakt og «mangler folk» sjekkes hvert 10. minutt.
 create extension if not exists pg_net;
 create extension if not exists pg_cron;
