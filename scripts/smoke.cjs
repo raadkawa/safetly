@@ -37,6 +37,8 @@ fs.mkdirSync(OUT, { recursive: true });
     await page.getByLabel('Telefon').fill('481 22 333');
     await shot('01-ny-konto');
     await page.getByRole('button', { name: 'Opprett konto' }).click();
+    await page.getByRole('heading', { name: 'Velg ditt lag' }).waitFor();
+    await page.getByRole('button', { name: /Byåsen – Hallset/ }).click();
     await page.getByRole('heading', { level: 1 }).filter({ hasText: 'Ingrid' }).waitFor();
     step('konto opprettet og logget inn');
     await shot('02-vakter');
@@ -213,6 +215,29 @@ fs.mkdirSync(OUT, { recursive: true });
     await page.getByRole('navigation', { name: 'Hovedmeny' }).getByRole('link', { name: 'Info' }).click();
     await page.getByRole('link', { name: 'Kontor for koordinatorer' }).click();
     step('vakttider: én vakt 20–22, bare fredag og lørdag, minst 3 voksne');
+
+    // Lag
+    await page.getByRole('navigation', { name: 'Hovedmeny' }).getByRole('link', { name: 'Vakter' }).click();
+    await page.getByLabel('Vis lag').selectOption({ label: 'Ugla – Dalgård' });
+    await page.getByText('Du ser vaktlisten til', { exact: false }).waitFor();
+    if (await page.getByRole('button', { name: /^Book meg på/ }).count()) throw new Error('kan booke i et annet lag');
+    await page.getByLabel('Vis lag').selectOption({ label: 'Byåsen – Hallset (mitt lag)' });
+    await page.getByText('Du ser vaktlisten til', { exact: false }).waitFor({ state: 'detached' });
+    await page.getByRole('navigation', { name: 'Hovedmeny' }).getByRole('link', { name: 'Info' }).click();
+    await page.getByText('Mitt lag').waitFor();
+    await page.getByRole('link', { name: 'Kontor for koordinatorer' }).click();
+    await page.getByLabel('Nytt lag').fill('Selsbakk');
+    await page.getByRole('button', { name: 'Lag nytt lag' }).click();
+    await page.getByText(/Laget «Selsbakk» er laget/).waitFor();
+    await page.getByText('Du styrer laget', { exact: false }).locator('b', { hasText: 'Selsbakk' }).waitFor();
+    if (await page.getByLabel('Rolle for Ahmed Said').count()) throw new Error('foreldre fra andre lag vises i Kontor');
+    await page.getByLabel('Vis lag').selectOption({ label: 'Byåsen – Hallset (mitt lag)' });
+    await page.getByLabel('Lag for Ahmed Said').selectOption({ label: 'Selsbakk' });
+    await page.getByText('Flyttet.').waitFor();
+    if (await page.getByLabel('Rolle for Ahmed Said').count()) throw new Error('Ahmed ble ikke flyttet');
+    await shot('08c-lag');
+    await page.getByRole('navigation', { name: 'Hovedmeny' }).getByRole('link', { name: 'Info' }).click();
+    step('lag: se andre lags vaktliste uten å booke, lage nytt lag, flytte forelder');
     await shot('08-kontor');
 
     // Nødhjelp
@@ -231,6 +256,8 @@ fs.mkdirSync(OUT, { recursive: true });
     await page.getByLabel('E-post').fill('ola@eksempel.no');
     await page.getByLabel('Passord').fill('hemmelig2');
     await page.getByRole('button', { name: 'Opprett konto' }).click();
+    await page.getByRole('heading', { name: 'Velg ditt lag' }).waitFor();
+    await page.getByRole('button', { name: /Byåsen – Hallset/ }).click();
     await page.getByRole('heading', { level: 1 }).filter({ hasText: 'Ola' }).waitFor();
     await page.getByRole('navigation', { name: 'Hovedmeny' }).getByRole('link', { name: 'Info' }).click();
     await page.getByText('Forelder', { exact: false }).first().waitFor();

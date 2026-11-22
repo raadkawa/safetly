@@ -136,15 +136,35 @@
       async resetPassword(email) { ok(await sb.auth.resetPasswordForEmail(email, { redirectTo: redirect() })); },
       async updatePassword(password) { ok(await sb.auth.updateUser({ password })); },
       async signOut() { await sb.auth.signOut(); },
-      async profiles() { return ok(await sb.from('profiles').select('id,full_name,role,created_at').order('full_name')); },
+      async profiles() {
+        const r = await sb.from('profiles').select('id,full_name,role,created_at,team_id,is_admin').order('full_name');
+        if (!r.error) return r.data;
+        return ok(await sb.from('profiles').select('id,full_name,role,created_at').order('full_name')); // før lag.sql
+      },
+      async teams() { const r = await sb.from('teams').select('id,name,meeting_name,meeting_address,meeting_note,map,shifts,created_at').order('created_at'); return r.error ? null : r.data; },
+      async updateTeam(id, v) { const rows = ok(await sb.from('teams').update(v).eq('id', id).select('id')); if (!rows || !rows.length) throw new Error('permission denied'); },
+      async createTeam(name) { return ok(await sb.from('teams').insert({ name }).select('id').single()); },
+      async setTeam(userId, teamId) { ok(await sb.from('profiles').update({ team_id: teamId }).eq('id', userId)); },
       async phones() { return ok(await sb.from('private_contacts').select('user_id,phone')); },
       async contacts() { return ok(await sb.rpc('coordinator_contacts')); },
-      async bookings(from, to) { return ok(await sb.from('bookings').select('id,user_id,shift_date,slot').gte('shift_date', from).lte('shift_date', to)); },
+      async bookings(from, to) {
+        const r = await sb.from('bookings').select('id,user_id,shift_date,slot,team_id').gte('shift_date', from).lte('shift_date', to);
+        if (!r.error) return r.data;
+        return ok(await sb.from('bookings').select('id,user_id,shift_date,slot').gte('shift_date', from).lte('shift_date', to));
+      },
       async myBookings() { return ok(await sb.from('bookings').select('id,shift_date,slot').eq('user_id', userId)); },
       async book(rows) { ok(await sb.from('bookings').upsert(rows, { onConflict: 'user_id,shift_date,slot', ignoreDuplicates: true })); },
       async unbook(id) { ok(await sb.from('bookings').delete().eq('id', id)); },
-      async news() { return ok(await sb.from('news').select('id,author_id,title,body,created_at').order('created_at', { ascending: false }).limit(30)); },
-      async addNews(n) { return ok(await sb.from('news').insert({ author_id: userId, title: n.title, body: n.body }).select('id').single()); },
+      async news() {
+        const r = await sb.from('news').select('id,author_id,title,body,created_at,team_id').order('created_at', { ascending: false }).limit(40);
+        if (!r.error) return r.data;
+        return ok(await sb.from('news').select('id,author_id,title,body,created_at').order('created_at', { ascending: false }).limit(30));
+      },
+      async addNews(n) {
+        const row = { author_id: userId, title: n.title, body: n.body };
+        if (n.team_id !== undefined) row.team_id = n.team_id;
+        return ok(await sb.from('news').insert(row).select('id').single());
+      },
       async deleteNews(id) { ok(await sb.from('news').delete().eq('id', id)); },
       async reports() { return ok(await sb.from('reports').select('id,user_id,shift_date,slot,mood,note,created_at').order('shift_date', { ascending: false }).order('slot', { ascending: false }).limit(40)); },
       async myReports() { return ok(await sb.from('reports').select('shift_date,slot').eq('user_id', userId)); },
@@ -198,11 +218,11 @@
 
   // ------------------------------------------------------------------ datalag: demomodus (lokalt)
   function localApi() {
-    const KEY = 'safetly-demo-v1';
+    const KEY = 'safetly-demo-v2';
     let db = load();
     const listeners = [];
     function load() {
-      try { const x = JSON.parse(localStorage.getItem(KEY)); if (x && x.v === 1) return x; } catch (e) { /* tom */ }
+      try { const x = JSON.parse(localStorage.getItem(KEY)); if (x && x.v === 2) return x; } catch (e) { /* tom */ }
       return seed();
     }
     function save() { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) { /* privat modus */ } }
@@ -211,23 +231,29 @@
         ['Kari Nilsen', '412 34 567', 'koordinator'], ['Ahmed Said', '934 56 789', 'forelder'], ['Lene Berg', '977 10 204', 'forelder'],
         ['Tor Eide', '908 44 120', 'forelder'], ['Marte Vik', '473 98 001', 'forelder'], ['Jonas Lie', '416 22 870', 'forelder'], ['Sara Khan', '455 67 890', 'forelder']
       ];
-      const users = people.map((p, i) => ({ id: 'demo-' + i, email: '', password: null, full_name: p[0], phone: p[1], role: p[2], seed: true, created_at: new Date(2026, 7, 20 + i).toISOString() }));
+      const users = people.map((p, i) => ({ id: 'demo-' + i, email: '', password: null, full_name: p[0], phone: p[1], role: p[2], seed: true, is_admin: false, team_id: i < 5 ? 'lag1' : 'lag2', created_at: new Date(2026, 7, 20 + i).toISOString() }));
+      users[5].role = 'koordinator';
+      const teams = [
+        { id: 'lag1', name: 'Byåsen – Hallset', meeting_name: '', meeting_address: '', meeting_note: '', map: null, shifts: null, created_at: '2026-08-01T00:00:00Z' },
+        { id: 'lag2', name: 'Ugla – Dalgård', meeting_name: 'Ugla skole', meeting_address: '', meeting_note: 'Møt opp ved hovedinngangen.', map: null, shifts: { slots: [{ name: 'Kveldsvakt', start: '20:00', end: '22:30' }], min: 2, days: [4, 5] }, created_at: '2026-09-01T00:00:00Z' }
+      ];
       const t = today();
       const bookings = [];
       for (let d = -14; d <= 28; d++) {
         const date = iso(addDays(t, d));
         [1, 2].forEach((slot) => {
           const n = Math.abs((d * 7 + slot * 5 + 3) % 4); // 0–3 personer
-          for (let k = 0; k < n; k++) bookings.push({ id: uid(), user_id: users[(Math.abs(d) * 3 + slot * 2 + k) % users.length].id, shift_date: date, slot });
+          for (let k = 0; k < n; k++) { const u = users[(Math.abs(d) * 3 + slot * 2 + k) % users.length]; bookings.push({ id: uid(), user_id: u.id, shift_date: date, slot: u.team_id === 'lag2' ? 1 : slot, team_id: u.team_id }); }
         });
       }
       const uniq = {}; const bk = bookings.filter((b) => { const k = b.user_id + b.shift_date + b.slot; if (uniq[k]) return false; uniq[k] = 1; return true; });
       const ago = (h) => new Date(Date.now() - h * 3600000).toISOString();
       return {
-        v: 1, session: null, users, bookings: bk,
+        v: 2, session: null, users, teams, bookings: bk,
         news: [
-          { id: uid(), author_id: 'demo-0', title: 'Vi trenger flere voksne i helgen', body: 'Flere vakter mangler folk denne uka. Ta gjerne en ekstra vakt hvis du kan.', created_at: ago(30) },
-          { id: uid(), author_id: 'demo-0', title: 'Nye refleksvester og lykter', body: 'Kassen bak disken på oppmøtestedet er fylt opp. Legg alt tilbake etter vakt.', created_at: ago(80) }
+          { id: uid(), author_id: 'demo-0', team_id: 'lag1', title: 'Vi trenger flere voksne i helgen', body: 'Flere vakter mangler folk denne uka. Ta gjerne en ekstra vakt hvis du kan.', created_at: ago(30) },
+          { id: uid(), author_id: 'demo-0', team_id: 'lag1', title: 'Nye refleksvester og lykter', body: 'Kassen bak disken på oppmøtestedet er fylt opp. Legg alt tilbake etter vakt.', created_at: ago(80) },
+          { id: uid(), author_id: 'demo-5', team_id: 'lag2', title: 'Velkommen til Ugla – Dalgård', body: 'Vi går fredag og lørdag. Book deg gjerne på.', created_at: ago(55) }
         ],
         reports: [
           { id: uid(), user_id: 'demo-1', shift_date: iso(addDays(t, -1)), slot: 1, mood: 'rolig', note: 'Stille ved skolen. Noen ungdommer på Torget, hyggelig prat.', created_at: ago(20) },
@@ -271,7 +297,7 @@
         if (db.users.some((u) => u.email === email)) throw new Error('User already registered');
         if (password.length < 6) throw new Error('Password should be at least 6 characters');
         const first = !db.users.some((u) => !u.seed);
-        const u = { id: uid(), email, password, full_name: name, phone, role: first ? 'koordinator' : 'forelder', created_at: new Date().toISOString() };
+        const u = { id: uid(), email, password, full_name: name, phone, role: first ? 'koordinator' : 'forelder', is_admin: first, team_id: (db.teams || []).length === 1 ? db.teams[0].id : null, created_at: new Date().toISOString() };
         db.users.push(u); db.session = u.id;
         (db.messages = db.messages || []).push({ id: uid(), sender_id: 'demo-0', recipient_id: u.id, body: `Hei ${name.split(' ')[0] || ''}, og velkommen! Si fra hvis du lurer på noe om vaktene.`.replace(' ,', ','), created_at: new Date().toISOString() });
         save(); emit('SIGNED_IN');
@@ -285,9 +311,22 @@
       async resetPassword() { throw new Error('I demomodus finnes ingen e-post. Opprett en ny konto i stedet.'); },
       async updatePassword(p) { need().password = p; save(); },
       async signOut() { db.session = null; save(); emit('SIGNED_OUT'); },
-      async profiles() { return db.users.map((u) => ({ id: u.id, full_name: u.full_name, role: u.role, created_at: u.created_at })); },
-      async phones() { const m = need(); return db.users.filter((u) => m.role === 'koordinator' || u.id === m.id).map((u) => ({ user_id: u.id, phone: u.phone || '' })); },
-      async contacts() { need(); return db.users.filter((u) => u.role === 'koordinator').map((u) => ({ full_name: u.full_name, phone: u.phone || '' })); },
+      async profiles() { return db.users.map((u) => ({ id: u.id, full_name: u.full_name, role: u.role, created_at: u.created_at, team_id: u.team_id || null, is_admin: !!u.is_admin })); },
+      async teams() { need(); return (db.teams || []).slice(); },
+      async updateTeam(id, v) {
+        const m = need(); const t = db.teams.find((x) => x.id === id);
+        if (!t || !(m.is_admin || (m.role === 'koordinator' && m.team_id === id))) throw new Error('Ingen tilgang');
+        Object.assign(t, v); save();
+      },
+      async createTeam(name) { const m = need(); if (!m.is_admin) throw new Error('Bare administrator kan lage lag'); const t = { id: uid(), name, meeting_name: '', meeting_address: '', meeting_note: '', map: null, shifts: null, created_at: new Date().toISOString() }; db.teams.push(t); save(); return { id: t.id }; },
+      async setTeam(userId, teamId) {
+        const m = need(); const u = db.users.find((x) => x.id === userId); if (!u) return;
+        if (u.id !== m.id && !m.is_admin && !(m.role === 'koordinator' && m.team_id === u.team_id)) throw new Error('Ingen tilgang');
+        if (u.team_id !== teamId && u.role === 'koordinator' && !u.is_admin && !(m.is_admin && u.id !== m.id)) u.role = 'forelder';
+        u.team_id = teamId; save();
+      },
+      async phones() { const m = need(); return db.users.filter((u) => u.id === m.id || m.is_admin || (m.role === 'koordinator' && u.team_id === m.team_id)).map((u) => ({ user_id: u.id, phone: u.phone || '' })); },
+      async contacts() { const m = need(); return db.users.filter((u) => u.is_admin || (u.role === 'koordinator' && u.team_id === m.team_id)).map((u) => ({ full_name: u.full_name, phone: u.phone || '' })); },
       async messages() { const m = need(); return (db.messages || []).filter((x) => !x.recipient_id || x.sender_id === m.id || x.recipient_id === m.id).sort((a, b) => a.created_at.localeCompare(b.created_at)); },
       async sendMessage(recipientId, body) {
         const m = need();
@@ -318,18 +357,23 @@
         rows.forEach((r) => {
           if (r.user_id !== m.id) throw new Error('Du kan bare booke deg selv');
           if (r.shift_date < min) throw new Error('Vakten er passert');
-          if (!db.bookings.some((b) => b.user_id === r.user_id && b.shift_date === r.shift_date && b.slot === r.slot)) db.bookings.push(Object.assign({ id: uid() }, r));
+          if (!db.bookings.some((b) => b.user_id === r.user_id && b.shift_date === r.shift_date && b.slot === r.slot)) db.bookings.push(Object.assign({ id: uid(), team_id: m.team_id }, r));
         });
         save();
       },
       async unbook(id) {
         const m = need(); const b = db.bookings.find((x) => x.id === id);
         if (!b) return;
-        if (b.user_id !== m.id && m.role !== 'koordinator') throw new Error('Ingen tilgang');
+        if (b.user_id !== m.id && !m.is_admin && !(m.role === 'koordinator' && m.team_id === b.team_id)) throw new Error('Ingen tilgang');
         db.bookings = db.bookings.filter((x) => x.id !== id); save();
       },
       async news() { need(); return db.news.slice().sort((a, b) => b.created_at.localeCompare(a.created_at)); },
-      async addNews(n) { const m = coord(); const id = uid(); db.news.push({ id, author_id: m.id, title: n.title, body: n.body, created_at: new Date().toISOString() }); save(); return { id }; },
+      async addNews(n) {
+        const m = coord(); const id = uid();
+        const team = n.team_id !== undefined ? n.team_id : (m.is_admin ? null : m.team_id);
+        if (team === null && !m.is_admin) throw new Error('Bare administrator kan skrive til alle lag');
+        db.news.push({ id, author_id: m.id, team_id: team, title: n.title, body: n.body, created_at: new Date().toISOString() }); save(); return { id };
+      },
       async deleteNews(id) { coord(); db.news = db.news.filter((x) => x.id !== id); save(); },
       async reports() { need(); return db.reports.slice().sort((a, b) => (b.shift_date + b.slot).localeCompare(a.shift_date + a.slot)); },
       async myReports() { const m = need(); return db.reports.filter((r) => r.user_id === m.id); },
@@ -354,9 +398,9 @@
       async settings() { need(); return db.settings || null; },
       async updateSettings(v) { coord(); db.settings = Object.assign({}, db.settings, v); save(); },
       async setRole(id, role) {
-        coord(); const u = db.users.find((x) => x.id === id);
+        const m = coord(); const u = db.users.find((x) => x.id === id);
         if (!u) return;
-        if (u.role === 'koordinator' && role !== 'koordinator' && db.users.filter((x) => x.role === 'koordinator').length <= 1) throw new Error('Det må være minst én koordinator');
+        if (!m.is_admin && u.team_id !== m.team_id) throw new Error('Bare koordinator i laget kan endre roller');
         u.role = role; save();
       }
     };
@@ -385,19 +429,72 @@
     root.classList.toggle('big', S.big);
   }
 
-  const isCoord = () => !!(S.me && S.me.role === 'koordinator');
+  // ---- lag og roller
+  const hasTeams = () => Array.isArray(S.teams) && S.teams.length > 0;
+  const teamById = (id) => (S.teams || []).find((t) => t.id === id) || null;
+  const myTeamId = () => (S.me && S.me.team_id) || null;
+  function curTeam() { return teamById(S.viewTeam) || teamById(myTeamId()) || (S.teams || [])[0] || null; }
+  const curTeamId = () => (curTeam() || {}).id || null;
+  const isFirstTeam = (t) => !!t && !!S.teams && S.teams[0] && S.teams[0].id === t.id;
+  const isAdmin = () => !!(S.me && S.me.is_admin);
+  const isCoordOf = (tid) => isAdmin() || !!(S.me && S.me.role === 'koordinator' && (!hasTeams() || S.me.team_id === tid));
+  // Koordinator for laget som vises nå (vaktliste, kart, vakttider, kontor)
+  const isCoord = () => isCoordOf(curTeamId());
+  // Koordinator i et hvilket som helst lag (meldinger «Til alle», arrangementer)
+  const isAnyCoord = () => !!(S.me && (S.me.role === 'koordinator' || S.me.is_admin));
+  const inMyTeam = () => !hasTeams() || curTeamId() === myTeamId();
+  // Innstillingene (oppmøte, kart, vakttider) kommer fra laget som vises.
+  function syncTeamSettings() { const t = curTeam(); if (t) S.settings = t; }
+  const bookingInView = (b) => !hasTeams() || (b.team_id ? b.team_id === curTeamId() : isFirstTeam(curTeam()));
   function meeting() {
     const st = S.settings; const cf = CFG.meetingPlace || {};
     if (st && (st.meeting_name || st.meeting_address || st.meeting_note)) return { name: st.meeting_name, address: st.meeting_address, note: st.meeting_note };
     return { name: cf.name || '', address: cf.address || '', note: cf.note || '' };
   }
   const nameOf = (id) => (id === (S.user && S.user.id) ? 'Deg' : shortName((S.profiles[id] || {}).full_name));
-  function shiftPeople(date, slot) { return S.bookings.filter((b) => b.shift_date === date && b.slot === slot); }
-  function myBooking(date, slot) { return S.bookings.find((b) => b.shift_date === date && b.slot === slot && b.user_id === S.user.id); }
+  function shiftPeople(date, slot) { return S.bookings.filter((b) => b.shift_date === date && b.slot === slot && bookingInView(b)); }
+  function myBooking(date, slot) { return S.bookings.find((b) => b.shift_date === date && b.slot === slot && b.user_id === S.user.id && bookingInView(b)); }
   function covered(date) { const ids = slotsOn(date); return ids.length > 0 && ids.every((s) => shiftPeople(date, s).length >= MIN_PER_SHIFT); }
   // 'none' = ingen vakt denne dagen, 'ok' = alle vakter dekket, 'warn' = trenger flere
   function dayStatus(date) { return !slotsOn(date).length ? 'none' : covered(date) ? 'ok' : 'warn'; }
   const STATUS_TEXT = { none: 'ingen vakt', ok: 'dekket', warn: 'trenger flere' };
+
+  async function saveTeamSettings(v) {
+    if (hasTeams()) {
+      await api.updateTeam(curTeamId(), v);
+      S.teams = await api.teams(); syncTeamSettings();
+      return S.settings;
+    }
+    await api.updateSettings(v);
+    return api.settings();
+  }
+  async function reloadTeamsAndProfiles() {
+    const [teams, profiles, phones, contacts] = await Promise.all([api.teams().catch(() => null), api.profiles(), api.phones(), api.contacts()]);
+    S.teams = teams;
+    S.profiles = {}; profiles.forEach((x) => { S.profiles[x.id] = x; }); S.me = S.profiles[S.user.id];
+    S.phones = {}; phones.forEach((x) => { S.phones[x.user_id] = x.phone; }); S.contacts = contacts;
+    if (!teamById(S.viewTeam)) S.viewTeam = myTeamId();
+    if (hasTeams()) syncTeamSettings();
+  }
+
+  function teamSwitcher() {
+    if (!hasTeams() || S.teams.length < 2) return '';
+    return `<label class="team-switch"><span>Lag</span><select id="team-view" data-change="team-view" aria-label="Vis lag">${S.teams.map((t) => `<option value="${t.id}"${t.id === curTeamId() ? ' selected' : ''}>${esc(t.name)}${t.id === myTeamId() ? ' (mitt lag)' : ''}</option>`).join('')}</select></label>`;
+  }
+  function otherTeamNote() {
+    if (inMyTeam()) return '';
+    const mine = teamById(myTeamId());
+    return `<p class="card yellow tight small" role="note">Du ser vaktlisten til <b>${esc((curTeam() || {}).name)}</b>. Du booker vakter i ditt eget lag${mine ? `, <b>${esc(mine.name)}</b>` : ''}.</p>`;
+  }
+  function viewChooseTeam() {
+    return `<div class="wrap">${header()}<main id="innhold" tabindex="-1">
+      <div class="page-head"><h1 tabindex="-1">Velg ditt lag</h1><p class="muted">Hvert nabolag har sitt eget lag med egen vaktliste, eget kart og egne koordinatorer. Du kan bytte senere under Info.</p></div>
+      <ul class="chat-list">${S.teams.map((t) => {
+        const n = Object.values(S.profiles).filter((p) => p.team_id === t.id).length;
+        return `<li><button type="button" class="chat-row team-pick" data-act="choose-team" data-id="${t.id}"><span class="chat-av" aria-hidden="true">${I.people()}</span>
+          <span class="grow stack-s" style="gap:.125rem;text-align:left"><b>${esc(t.name)}</b><span class="preview">${n} ${n === 1 ? 'forelder' : 'foreldre'}${t.meeting_name ? ' · oppmøte ' + esc(t.meeting_name) : ''}</span></span>${I.right()}</button></li>`;
+      }).join('')}</ul></main></div>`;
+  }
 
   // ------------------------------------------------------------------ lasting av data
   async function loadAll() {
@@ -411,7 +508,9 @@
     ]);
     S.profiles = {}; profiles.forEach((p) => { S.profiles[p.id] = p; });
     S.phones = {}; phones.forEach((p) => { S.phones[p.user_id] = p.phone; });
-    try { S.settings = await api.settings(); } catch (e) { S.settings = null; } // før settings-tabellen finnes
+    S.teams = await api.teams().catch(() => null);
+    if (hasTeams()) syncTeamSettings();
+    else { try { S.settings = await api.settings(); } catch (e) { S.settings = null; } } // før lag.sql / settings-tabellen
     S.contacts = contacts || []; S.bookings = bookings; S.myBookings = mine; S.news = news; S.reports = reports;
     S.myReports = myReports; S.events = events; S.attendees = attendees;
     try {
@@ -420,6 +519,8 @@
       await loadReceipts();
     } catch (e) { S.messages = []; S.reads = {}; } // før meldingstabellene finnes
     S.me = S.profiles[S.user.id] || null;
+    if (S.me && !teamById(S.viewTeam)) S.viewTeam = myTeamId();
+    if (hasTeams()) syncTeamSettings();
     S.loaded = true; S.loadError = S.me ? null : 'Fant ikke profilen din. Kjør supabase/schema.sql og prøv igjen.';
   }
   async function reloadBookings() {
@@ -513,6 +614,7 @@
     const sm = small ? ' sm' : '';
     const label = shiftLabel(date, slot);
     if (shiftEnd(date, slot) <= now) return '<p class="small"><b>Gjennomført</b></p>';
+    if (!inMyTeam()) return '';
     if (mine) return `<button type="button" id="b-${date}-${slot}" class="pill ghost${sm} self-start" data-act="unbook" data-id="${mine.id}" data-label="${esc(label)}" aria-label="Avbook ${esc(label)}">Avbook</button>`;
     if (shiftStart(date, slot) <= now) return '<p class="small"><b>Pågår nå</b></p>';
     return `<button type="button" id="b-${date}-${slot}" class="pill${sm} self-start" data-act="book" data-date="${date}" data-slot="${slot}" aria-label="Book meg på ${esc(label)}">Book meg</button>`;
@@ -553,8 +655,9 @@
     const weekEnd = addDays(ws, 6);
     let html = `<div class="page-head"><h1 tabindex="-1">${greeting()}${first ? ', ' + esc(first) : ''}</h1>
       <p class="muted">Uke ${isoWeek(ws)} · ${ws.getDate()}.${ws.getMonth() !== weekEnd.getMonth() ? ' ' + MONTHS[ws.getMonth()] : ''}–${weekEnd.getDate()}. ${MONTHS[weekEnd.getMonth()]}</p></div>`;
+    html += teamSwitcher() + otherTeamNote();
 
-    if (next) {
+    if (next && inMyTeam()) {
       const partners = shiftPeople(next.shift_date, next.slot).filter((b) => b.user_id !== S.user.id).map((b) => nameOf(b.user_id));
       const isToday = next.shift_date === t;
       html += `<section class="card blue" aria-labelledby="neste">
@@ -566,7 +669,7 @@
         ${shiftPeople(next.shift_date, next.slot).filter((b) => b.user_id !== S.user.id).map((b) => `<a class="pill ghost sm" href="#/chat/${b.user_id}">${I.chat(18)}Skriv til ${esc(shortName((S.profiles[b.user_id] || {}).full_name).split(' ')[0])}</a>`).join('')}</div>
       </section>`;
     }
-    if (pending.length) {
+    if (pending.length && inMyTeam()) {
       const p = pending[0];
       html += `<section class="card pink tight" aria-labelledby="rapp"><h2 id="rapp" style="font-size:1.0625rem">Hvordan gikk vakta ${esc(fmtShort(p.shift_date))}?</h2>
         <p class="small muted">Skriv en kort vaktrapport, uten navn på barn.</p><a class="pill sm self-start" href="#/nyheter">${I.pen()}Skriv vaktrapport</a></section>`;
@@ -606,7 +709,7 @@
         </article></div>`;
     });
     html += `</div><label class="check-row"><input type="checkbox" id="repeat" data-act="repeat"${S.repeat ? ' checked' : ''}> Gjenta nye bookinger 4 uker frem</label></section>`;
-    if (isCoord()) html += `<a class="card ink tight" href="#/kontor" style="text-decoration:none;flex-direction:row;align-items:center;justify-content:space-between;min-height:3.5rem"><b>Kontor for koordinatorer</b>${I.right()}</a>`;
+    if (isCoordOf(myTeamId())) html += `<a class="card ink tight" href="#/kontor" style="text-decoration:none;flex-direction:row;align-items:center;justify-content:space-between;min-height:3.5rem"><b>Kontor for koordinatorer</b>${I.right()}</a>`;
     return html;
   }
 
@@ -640,7 +743,7 @@
         <p class="small muted">kl. ${esc(fmtTime(e.event_time))} · ${esc(e.place)}</p><a class="pill ghost sm self-start" href="#/arrangement">Se arrangement</a></div>`;
     });
     panel += '</section>';
-    return `<div class="between"><h1 tabindex="-1">${cap(MONTHS[m])} ${y}</h1>
+    return `${teamSwitcher()}<div class="between"><h1 tabindex="-1">${cap(MONTHS[m])} ${y}</h1>
         <div class="week-nav"><button type="button" class="icon-btn" data-act="month" data-dir="-1" aria-label="Forrige måned">${I.left()}</button>
         <button type="button" class="icon-btn" data-act="month" data-dir="1" aria-label="Neste måned">${I.right()}</button></div></div>
       <section class="cal" aria-label="Månedskalender for ${MONTHS[m]} ${y}">
@@ -670,20 +773,27 @@
       </form>`;
     }
     html += '<section class="stack" aria-labelledby="nytt"><div class="between"><h2 id="nytt">Fra koordinatorene</h2>';
-    if (isCoord()) html += `<button type="button" class="pill sm" data-act="toggle-news" aria-expanded="${S.newsForm}" aria-label="Skriv ny nyhet">${I.plus()}Ny</button>`;
+    const canPost = isCoordOf(myTeamId());
+    if (canPost) html += `<button type="button" class="pill sm" data-act="toggle-news" aria-expanded="${S.newsForm}" aria-label="Skriv ny nyhet">${I.plus()}Ny</button>`;
     html += '</div>';
-    if (isCoord() && S.newsForm) {
+    if (canPost && S.newsForm) {
+      const targets = !hasTeams() ? [] : isAdmin() ? [['', 'Alle lag']].concat(S.teams.map((t) => [t.id, t.name])) : [];
       html += `<form class="card" data-form="news" aria-label="Ny nyhet">
+        ${targets.length ? `<label class="field">Til<select id="n-team" name="team">${targets.map(([v, l]) => `<option value="${v}"${v === (myTeamId() || '') ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`
+          : hasTeams() ? `<p class="small muted">Til: ${esc((teamById(myTeamId()) || {}).name || 'ditt lag')}</p>` : ''}
         <label class="field">Tittel<input id="n-title" name="title" required maxlength="120"></label>
         <label class="field">Tekst<textarea id="n-body" name="body" required maxlength="2000" rows="4"></textarea></label>
         <div class="wrap-row"><button type="submit" class="pill">Legg ut</button><button type="button" class="pill ghost" data-act="toggle-news">Avbryt</button></div></form>`;
     }
-    if (!S.news.length) html += '<p class="empty">Ingen nyheter ennå.</p>';
-    S.news.forEach((n, i) => {
+    const news = S.news.filter((n) => !hasTeams() || !n.team_id || n.team_id === myTeamId() || isAdmin());
+    if (!news.length) html += '<p class="empty">Ingen nyheter ennå.</p>';
+    news.forEach((n, i) => {
       const a = S.profiles[n.author_id] || {};
-      html += `<article class="card ${i % 2 ? 'yellow' : 'blue'}"><p class="small muted"><b style="color:var(--ink)">${esc(a.full_name || 'Koordinator')}</b> · koordinator · ${esc(fmtStamp(n.created_at))}</p>
+      const to = !hasTeams() ? '' : n.team_id ? (teamById(n.team_id) || {}).name || '' : 'Alle lag';
+      const canDel = n.team_id ? isCoordOf(n.team_id) : (hasTeams() ? isAdmin() : isAnyCoord());
+      html += `<article class="card ${i % 2 ? 'yellow' : 'blue'}"><p class="small muted"><b style="color:var(--ink)">${esc(a.full_name || 'Koordinator')}</b> · ${esc(fmtStamp(n.created_at))}${to ? ` · <span class="badge soft">${esc(to)}</span>` : ''}</p>
         <h3>${esc(n.title)}</h3><p class="pre">${esc(n.body)}</p>
-        ${isCoord() ? `<button type="button" class="link-btn self-start" data-act="del-news" data-id="${n.id}">Slett nyheten</button>` : ''}</article>`;
+        ${canDel ? `<button type="button" class="link-btn self-start" data-act="del-news" data-id="${n.id}">Slett nyheten</button>` : ''}</article>`;
     });
     html += '</section><section class="stack" aria-labelledby="rapporter"><h2 id="rapporter">Vaktrapporter</h2>';
     if (!S.reports.length) html += '<p class="empty">Ingen vaktrapporter ennå.</p>';
@@ -716,7 +826,7 @@
       const d = parseIso(e.event_date);
       const going = S.attendees.filter((a) => a.event_id === e.id);
       const mine = going.some((a) => a.user_id === S.user.id);
-      const canDelete = e.created_by === S.user.id || isCoord();
+      const canDelete = e.created_by === S.user.id || isAnyCoord();
       html += `<article class="card ${colors[i % 3]}" aria-labelledby="ev-${e.id}">
         <div class="row" style="align-items:flex-start;gap:.875rem">
           <div class="date-tile" aria-hidden="true"><span class="dt-s">${DAYS_SHORT[dow(d)]}</span><span class="dt-d">${d.getDate()}</span><span class="dt-m">${MONTHS[d.getMonth()].slice(0, 3)}</span></div>
@@ -738,6 +848,11 @@
     const now = new Date();
     const done = S.myBookings.filter((b) => shiftEnd(b.shift_date, b.slot) <= now);
     let html = '<h1 tabindex="-1">Info</h1>';
+    if (hasTeams()) {
+      const mine = teamById(myTeamId());
+      html += `<section class="card ink tight" aria-labelledby="mittlag"><div class="between"><span><span class="small" style="opacity:.8">Mitt lag</span><br><b id="mittlag" style="font-size:1.125rem">${esc(mine ? mine.name : 'Ikke valgt')}</b></span>
+        ${S.teams.length > 1 ? `<label class="sr-only" for="my-team">Bytt lag</label><select id="my-team" class="input" style="width:auto;min-height:2.75rem;border-radius:999px;font-weight:600;font-size:.875rem;background:var(--bg)" data-change="my-team">${S.teams.map((t) => `<option value="${t.id}"${t.id === myTeamId() ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select>` : ''}</div></section>`;
+    }
     html += `<section class="card blue" aria-labelledby="oppmote"><div class="between"><h2 id="oppmote" class="eyebrow">Oppmøtested</h2>
       ${isCoord() && !S.meetingForm ? '<button type="button" class="pill ghost sm" data-act="toggle-meeting" aria-label="Endre oppmøtested">Endre</button>' : ''}</div>`;
     if (isCoord() && S.meetingForm) {
@@ -775,7 +890,7 @@
       <dl class="stats"><div><dt>vakter</dt><dd>${done.length}</dd></div><div><dt>timer</dt><dd>${done.length * 2}</dd></div><div><dt>rapporter</dt><dd>${S.myReports.length}</dd></div></dl></section>`;
     html += viewPushCard();
     html += `<section class="card" aria-labelledby="profil"><h2 id="profil" style="font-size:1.25rem">Profil</h2>
-      <p class="small muted">${esc(S.user.email || '')} · ${isCoord() ? 'Koordinator' : 'Forelder'}</p>
+      <p class="small muted">${esc(S.user.email || '')} · ${isAdmin() ? 'Administrator' : isCoordOf(myTeamId()) ? 'Koordinator' : 'Forelder'}</p>
       <form class="stack" data-form="profile">
         <label class="field">Navn<input id="p-name" name="name" required maxlength="80" autocomplete="name" value="${esc(S.me.full_name)}"></label>
         <label class="field">Telefon<input id="p-phone" name="phone" type="tel" maxlength="30" autocomplete="tel" value="${esc(S.phones[S.user.id] || '')}" aria-describedby="p-phone-hint">
@@ -789,7 +904,7 @@
       </div>
       <button type="button" class="pill ghost self-start" data-act="logout">Logg ut</button>
     </section>`;
-    if (isCoord()) html += `<a class="card ink tight" href="#/kontor" style="text-decoration:none;flex-direction:row;align-items:center;justify-content:space-between;min-height:4rem"><b>Kontor for koordinatorer</b>${I.right()}</a>`;
+    if (isCoordOf(myTeamId())) html += `<a class="card ink tight" href="#/kontor" style="text-decoration:none;flex-direction:row;align-items:center;justify-content:space-between;min-height:4rem"><b>Kontor for koordinatorer</b>${I.right()}</a>`;
     return html;
   }
 
@@ -799,7 +914,8 @@
     const open = needsPeople(14);
     const ws = weekStart(today());
     let html = `<div class="page-head"><a href="#/info" class="row" style="min-height:2.75rem;text-decoration:none;font-weight:600;align-self:flex-start">${I.left()}Info</a>
-      <div class="row" style="flex-wrap:wrap"><h1 tabindex="-1">Kontor</h1><span class="badge ink">Kun koordinatorer</span></div></div>`;
+      <div class="row" style="flex-wrap:wrap"><h1 tabindex="-1">Kontor</h1><span class="badge ink">${isAdmin() ? 'Administrator' : 'Kun koordinatorer'}</span></div></div>`;
+    if (hasTeams()) html += (isAdmin() ? teamSwitcher() : '') + `<p class="small muted">Du styrer laget <b style="color:var(--ink)">${esc((curTeam() || {}).name)}</b>.</p>`;
 
     html += `<section class="card yellow" aria-labelledby="apne"><div class="between"><h2 id="apne" style="font-size:1.25rem">Åpne vakter</h2><span class="small muted">neste 14 dager</span></div>`;
     if (!open.length) html += '<p>Alle vakter de neste 14 dagene er dekket.</p>';
@@ -834,8 +950,9 @@
     }
     html += '</div></section>';
 
-    const people = Object.values(S.profiles).sort((a, b) => (a.full_name || '').localeCompare(b.full_name || '', 'nb'));
-    html += `<section class="card" aria-labelledby="foreldre"><div class="between"><h2 id="foreldre" style="font-size:1.25rem">Foreldre</h2><span class="small muted">${people.length} i nabolaget</span></div><div>`;
+    const people = Object.values(S.profiles).filter((p) => !hasTeams() || p.team_id === curTeamId() || (isAdmin() && !p.team_id))
+      .sort((a, b) => (a.full_name || '').localeCompare(b.full_name || '', 'nb'));
+    html += `<section class="card" aria-labelledby="foreldre"><div class="between"><h2 id="foreldre" style="font-size:1.25rem">Foreldre</h2><span class="small muted">${people.length} i laget</span></div><div>`;
     people.forEach((p) => {
       const ph = S.phones[p.id];
       html += `<div class="list-row"><div class="grow stack-s" style="gap:.125rem"><b>${esc(p.full_name || 'Uten navn')}${p.id === S.user.id ? ' (deg)' : ''}</b>
@@ -843,10 +960,21 @@
         ${p.id !== S.user.id ? `<a class="icon-btn" href="#/chat/${p.id}" aria-label="Skriv melding til ${esc(p.full_name)}">${I.chat(20)}</a>` : ''}
         <label class="sr-only" for="role-${p.id}">Rolle for ${esc(p.full_name)}</label>
         <select id="role-${p.id}" class="input" style="width:auto;min-height:2.75rem;border-radius:999px;font-weight:600;font-size:.875rem" data-change="role" data-id="${p.id}">
-          <option value="forelder"${p.role === 'forelder' ? ' selected' : ''}>Forelder</option><option value="koordinator"${p.role === 'koordinator' ? ' selected' : ''}>Koordinator</option></select></div>`;
+          <option value="forelder"${p.role === 'forelder' ? ' selected' : ''}>Forelder</option><option value="koordinator"${p.role === 'koordinator' ? ' selected' : ''}>Koordinator</option></select>
+        ${hasTeams() && isAdmin() && S.teams.length > 1 ? `<label class="sr-only" for="pteam-${p.id}">Lag for ${esc(p.full_name)}</label><select id="pteam-${p.id}" class="input" style="width:auto;max-width:8rem;min-height:2.75rem;border-radius:999px;font-weight:600;font-size:.8125rem" data-change="person-team" data-id="${p.id}">${p.team_id ? '' : '<option value="">Uten lag</option>'}${S.teams.map((t) => `<option value="${t.id}"${t.id === p.team_id ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select>` : ''}</div>`;
     });
     html += `</div></section>
       <button type="button" class="pill block" style="min-height:3.5rem" data-act="csv">${I.download()}Last ned vaktliste (CSV, 4 uker)</button>`;
+    if (hasTeams() && isAdmin()) {
+      const t = curTeam();
+      html += `<section class="card" aria-labelledby="lag-h"><h2 id="lag-h" style="font-size:1.25rem">Lag</h2>
+        <ul class="stack-s" style="list-style:none;margin:0;padding:0">${S.teams.map((x) => `<li class="between"><span>${esc(x.name)}</span><span class="small muted">${Object.values(S.profiles).filter((p) => p.team_id === x.id).length} foreldre</span></li>`).join('')}</ul>
+        <form class="stack" data-form="team-rename"><label class="field">Nytt navn på «${esc(t.name)}»<input id="team-name" name="name" maxlength="60" required value="${esc(t.name)}"></label>
+          <button type="submit" class="pill ghost sm self-start">Lagre navn</button></form>
+        <form class="stack" data-form="team-new"><label class="field">Nytt lag<input id="team-new" name="name" maxlength="60" required placeholder="F.eks. Ugla – Dalgård"></label>
+          <button type="submit" class="pill sm self-start">${I.plus()}Lag nytt lag</button></form>
+        <p class="small muted">Et nytt lag får egne vakttider, eget kart og oppmøtested. Gjør en forelder til koordinator i laget, så kan de styre det selv.</p></section>`;
+    }
     return html;
   }
 
@@ -916,7 +1044,7 @@
   // ------------------------------------------------------------------ Meldinger
   async function loadReceipts() {
     try {
-      const [peers, alle] = await Promise.all([api.peerReads(), isCoord() ? api.alleReadTimes() : Promise.resolve([])]);
+      const [peers, alle] = await Promise.all([api.peerReads(), isAnyCoord() ? api.alleReadTimes() : Promise.resolve([])]);
       S.peerReads = {}; peers.forEach((r) => { S.peerReads[r.user_id] = r.last_read_at; });
       S.alleReads = (alle || []).map((x) => (typeof x === 'string' ? x : (x && (x.alle_read_times || x.last_read_at)) || '')).filter(Boolean);
     } catch (e) { /* «sett»-funksjonen er ikke satt opp i databasen ennå */ }
@@ -924,7 +1052,7 @@
   function onReadUpdate(row) {
     if (!S.user || !row) return;
     if (row.thread === S.user.id && row.user_id !== S.user.id) { S.peerReads[row.user_id] = row.last_read_at; render(); }
-    else if (row.thread === 'alle' && isCoord()) { loadReceipts().then(render); }
+    else if (row.thread === 'alle' && isAnyCoord()) { loadReceipts().then(render); }
   }
   function seenLabel(ts) {
     const d = new Date(ts); const t = today(); const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -993,7 +1121,7 @@
     const people = Object.values(S.profiles).filter((p) => p.id !== S.user.id).sort((a, b) => (a.full_name || '').localeCompare(b.full_name || '', 'nb'));
     return `<div class="page-head"><a href="#/chat" class="row back-link">${I.left()}Meldinger</a><h1 tabindex="-1">Ny melding</h1></div>
       <label class="field">Søk etter navn<input id="chat-search" type="search" autocomplete="off" placeholder="Skriv et navn"></label>
-      <ul class="chat-list" id="pick-list">${isCoord() ? `<li data-name="til alle"><a class="chat-row alle" href="#/chat/alle">${chatAvatar('alle')}<span class="grow stack-s" style="gap:.125rem"><b>Til alle</b><span class="preview">Beskjed til hele nabolaget</span></span></a></li>` : ''}
+      <ul class="chat-list" id="pick-list">${isAnyCoord() ? `<li data-name="til alle"><a class="chat-row alle" href="#/chat/alle">${chatAvatar('alle')}<span class="grow stack-s" style="gap:.125rem"><b>Til alle</b><span class="preview">Beskjed til hele nabolaget</span></span></a></li>` : ''}
       ${people.map((p) => `<li data-name="${esc((p.full_name || '').toLowerCase())}"><a class="chat-row" href="#/chat/${p.id}">${chatAvatar(p.id)}<span class="grow stack-s" style="gap:.125rem"><b>${esc(p.full_name || 'Uten navn')}</b><span class="preview">${p.role === 'koordinator' ? 'Koordinator' : 'Forelder'}</span></span></a></li>`).join('')}</ul>
       <p class="empty" id="pick-empty" hidden>Fant ingen med det navnet.</p>`;
   }
@@ -1022,7 +1150,7 @@
       if (mine && thread !== 'alle' && m.id === lastMineId) {
         const seen = S.peerReads[thread] && Date.parse(S.peerReads[thread]) >= Date.parse(m.created_at);
         receipt = seen ? `<span class="receipt seen">${I.checks()}${esc(seenLabel(S.peerReads[thread]))}</span>` : `<span class="receipt">${I.check()}Sendt</span>`;
-      } else if (mine && thread === 'alle' && isCoord()) {
+      } else if (mine && thread === 'alle' && isAnyCoord()) {
         const n = S.alleReads.filter((t) => Date.parse(t) >= Date.parse(m.created_at)).length;
         receipt = `<span class="receipt${n ? ' seen' : ''}">${n ? I.checks() : I.check()}Sett av ${n} av ${audience}</span>`;
       }
@@ -1033,7 +1161,7 @@
     });
     html += '</ol>';
     if (!msgs.length) html += `<p class="empty">${thread === 'alle' ? 'Ingen beskjeder til alle ennå.' : 'Ingen meldinger ennå. Si hei!'}</p>`;
-    if (thread === 'alle' && !isCoord()) {
+    if (thread === 'alle' && !isAnyCoord()) {
       html += `<div class="composer readonly"><p class="small">Bare koordinatorene kan skrive her. Vil du svare, send en melding til én koordinator.</p>
         <a class="pill sm self-start" href="#/chat/ny">Skriv til en koordinator</a></div>`;
     } else {
@@ -1167,7 +1295,7 @@
   function currentMap() {
     const st = S.settings && S.settings.map;
     if (st && Array.isArray(st.area) && st.area.length > 2) return st;
-    return window.SAFETLY_OMRADE || null;
+    return (!hasTeams() || isFirstTeam(curTeam())) ? (window.SAFETLY_OMRADE || null) : null;
   }
   function mapData() { return S.mapEdit ? S.mapDraft : currentMap(); }
   function roundKey() { const n = new Date(); if (n.getHours() < 6) n.setDate(n.getDate() - 1); return 'safetly-runde-' + iso(n); }
@@ -1178,12 +1306,14 @@
 
   function viewKart() {
     const d = mapData();
-    if (!d) return '<h1 tabindex="-1">Vaktområde</h1><p class="empty">Vaktområdet er ikke satt opp ennå.</p>';
+    if (!d) return `<div class="page-head"><a href="#/info" class="row back-link">${I.left()}Info</a><h1 tabindex="-1">Vaktområde</h1></div>${teamSwitcher()}
+      <p class="empty">Vaktområdet for ${esc((curTeam() || {}).name || 'laget')} er ikke tegnet ennå.</p>
+      ${isCoord() ? `<button type="button" class="pill self-start" data-act="map-edit">${I.pen()}Tegn vaktområdet</button>` : ''}`;
     const cps = d.checkpoints || [];
     const seen = visited();
     const done = cps.filter((c) => seen.has(c.id)).length;
     let html = `<div class="page-head"><a href="#/info" class="row back-link">${I.left()}Info</a>
-      <h1 tabindex="-1">Vaktområde</h1><p class="muted">${esc(d.name || '')}${d.name ? ' · ' : ''}Gå innom alle sjekkpunktene i løpet av vakten.</p></div>`;
+      <h1 tabindex="-1">Vaktområde</h1><p class="muted">${esc(d.name || '')}${d.name ? ' · ' : ''}Gå innom alle sjekkpunktene i løpet av vakten.</p></div>${S.mapEdit ? '' : teamSwitcher()}`;
     if (S.mapEdit) {
       html += `<div class="card ink tight" role="status">${S.mapDraw
         ? `<b>Tegn grensen</b><p class="small">Trykk på kartet rundt hele området, ett punkt om gangen. <span id="draw-count">${d.area.length}</span> punkter så langt.</p>`
@@ -1233,7 +1363,7 @@
           <label class="field">Hva skal dere se etter<input id="cpt-${esc(c.id)}" maxlength="120" value="${esc(c.note || '')}"></label></div>`).join('')}
       </section>
       <div class="wrap-row"><button type="button" class="pill" data-act="map-save">Lagre kart</button><button type="button" class="pill ghost" data-act="map-cancel">Avbryt</button></div>
-      ${S.settings && S.settings.map ? '<button type="button" class="link-btn self-start" data-act="map-default">Gå tilbake til standardkartet</button>' : ''}`;
+      ${S.settings && S.settings.map && (!hasTeams() || isFirstTeam(curTeam())) ? '<button type="button" class="link-btn self-start" data-act="map-default">Gå tilbake til standardkartet</button>' : ''}`;
     }
     return html;
   }
@@ -1315,6 +1445,9 @@
   // ------------------------------------------------------------------ tegning
   const VIEWS = { kart: viewKart, chat: viewChat, vakter: viewVakter, kalender: viewKalender, nyheter: viewNyheter, arrangement: viewArrangement, info: viewInfo, kontor: viewKontor };
   function render() {
+    // Info handler alltid om eget lag; koordinatorer (ikke administrator) styrer bare eget lag i Kontor.
+    if (hasTeams() && S.me && (route() === 'info' || route() === 'nyheter' || (route() === 'kontor' && !isAdmin()))) S.viewTeam = myTeamId();
+    if (hasTeams()) syncTeamSettings();
     applyShifts(S.settings && S.settings.shifts);
     const app = $('#app');
     const r = route();
@@ -1334,6 +1467,7 @@
     else if (S.recovery) html = viewRecovery();
     else if (!S.user) html = viewAuth();
     else if (!S.loaded) html = `<div class="wrap">${header()}<main id="innhold" tabindex="-1"><p class="loading">Henter vakter …</p></main></div>`;
+    else if (!S.loadError && hasTeams() && S.me && !S.me.team_id) html = viewChooseTeam();
     else if (S.loadError) html = `<div class="wrap">${header()}<main id="innhold" tabindex="-1"><h1 tabindex="-1">Noe gikk galt</h1><p>${esc(S.loadError)}</p><button type="button" class="pill self-start" data-act="retry">Prøv igjen</button><button type="button" class="pill ghost self-start" data-act="logout">Logg ut</button></main></div>`;
     else {
       const inThread = r === 'chat' && routeParam() && routeParam() !== 'ny';
@@ -1380,8 +1514,10 @@
     'repeat'(el) { S.repeat = el.checked; },
     'book'(el) {
       const date = el.dataset.date; const slot = +el.dataset.slot;
-      const rows = [{ user_id: S.user.id, shift_date: date, slot }];
-      if (S.repeat) for (let w = 1; w <= 4; w++) rows.push({ user_id: S.user.id, shift_date: iso(addDays(parseIso(date), 7 * w)), slot });
+      const tid = hasTeams() ? curTeamId() : undefined;
+      const row = (d) => (tid ? { user_id: S.user.id, shift_date: d, slot, team_id: tid } : { user_id: S.user.id, shift_date: d, slot });
+      const rows = [row(date)];
+      if (S.repeat) for (let w = 1; w <= 4; w++) rows.push(row(iso(addDays(parseIso(date), 7 * w))));
       run(async () => {
         await api.book(rows);
         await ensureRange(S.range.from, rows[rows.length - 1].shift_date);
@@ -1422,7 +1558,7 @@
         drawLayers(); if (MAP) MAP.flyTo(ll, 17, { duration: 0.6 });
       }, () => { el.disabled = false; toast('Fikk ikke tak i posisjonen. Sjekk at appen har lov til å bruke posisjon.', true); }, { enableHighAccuracy: true, timeout: 10000 });
     },
-    'map-edit'() { S.mapDraft = JSON.parse(JSON.stringify(currentMap())); S.mapDraft.checkpoints = S.mapDraft.checkpoints || []; S.mapDraft.area = S.mapDraft.area || []; S.mapEdit = true; S.mapAdd = false; S.mapDraw = false; render(); },
+    'map-edit'() { S.mapDraft = JSON.parse(JSON.stringify(currentMap() || { name: (curTeam() || {}).name || '', area: [], checkpoints: [], meet: null })); S.mapDraft.checkpoints = S.mapDraft.checkpoints || []; S.mapDraft.area = S.mapDraft.area || []; S.mapEdit = true; S.mapAdd = false; S.mapDraw = false; render(); },
     'map-cancel'() { S.mapEdit = false; S.mapDraft = null; S.mapAdd = false; S.mapDraw = false; render(); },
     'map-add'() { readDraftInputs(); S.mapAdd = !S.mapAdd; S.mapDraw = false; render(); },
     'map-draw'() { readDraftInputs(); S.mapDraft.area = []; S.mapDraw = true; S.mapAdd = false; render(); },
@@ -1438,12 +1574,12 @@
       const d = S.mapDraft;
       if (d.area.length < 3) { toast('Grensen trenger minst tre punkter.', true); return; }
       run(async () => {
-        await api.updateSettings({ map: d });
-        S.settings = await api.settings();
+        S.settings = await saveTeamSettings({ map: d });
         if (!S.settings || !S.settings.map) throw new Error('Kartet kunne ikke lagres. Er kart.sql kjørt i databasen?');
         S.mapEdit = false; S.mapDraft = null;
       }, 'Kartet er lagret for alle.');
     },
+    'choose-team'(el) { run(async () => { await api.setTeam(S.user.id, el.dataset.id); await reloadTeamsAndProfiles(); S.viewTeam = myTeamId(); S.lastRoute = null; }, 'Velkommen i laget!'); },
     'shift-edit'() { const c = currentShifts(); S.shiftDraft = { slots: c.slots.map((x) => Object.assign({ key: slotKey() }, x)), min: c.min, days: c.days.slice() }; render(); const f = $('[id^="sl-name-"]'); if (f) f.focus(); },
     'shift-cancel'() { S.shiftDraft = null; render(); },
     'slot-add'() {
@@ -1457,7 +1593,7 @@
     },
     'map-default'() {
       if (!confirm('Gå tilbake til standardkartet? Endringene dere har lagret forsvinner.')) return;
-      run(async () => { await api.updateSettings({ map: null }); S.settings = await api.settings(); S.mapEdit = false; S.mapDraft = null; }, 'Standardkartet brukes igjen.');
+      run(async () => { S.settings = await saveTeamSettings({ map: null }); S.mapEdit = false; S.mapDraft = null; }, 'Standardkartet brukes igjen.');
     },
     'toggle-meeting'() { S.meetingForm = !S.meetingForm; render(); const f = $('#m-name'); if (f) f.focus(); },
     'del-news'(el) { if (!confirm('Slette nyheten?')) return; run(async () => { await api.deleteNews(el.dataset.id); S.news = await api.news(); }, 'Nyheten er slettet.'); },
@@ -1499,7 +1635,9 @@
       toast('Takk! Rapporten vises under vaktrapporter.');
     },
     async news(f) {
-      const created = await api.addNews({ title: f.title.value.trim(), body: f.body.value.trim() });
+      const item = { title: f.title.value.trim(), body: f.body.value.trim() };
+      if (hasTeams()) item.team_id = f.team ? (f.team.value || null) : myTeamId();
+      const created = await api.addNews(item);
       if (created && created.id) api.notify({ type: 'news', id: created.id }).catch(() => {});
       f.reset(); S.newsForm = false; S.news = await api.news(); toast('Nyheten er lagt ut.');
     },
@@ -1519,6 +1657,16 @@
       S.reads[thread] = new Date().toISOString(); api.markRead(thread).catch(() => {});
       S.chatBottom = true;
     },
+    async 'team-new'(f) {
+      const name = f.name.value.trim(); if (!name) return;
+      const t = await api.createTeam(name);
+      f.reset(); await reloadTeamsAndProfiles(); S.viewTeam = t.id;
+      toast(`Laget «${name}» er laget. Sett vakttider, oppmøtested og kart for det.`);
+    },
+    async 'team-rename'(f) {
+      const name = f.name.value.trim(); if (!name) return;
+      await api.updateTeam(curTeamId(), { name }); await reloadTeamsAndProfiles(); toast('Navnet er endret.');
+    },
     async shifts() {
       readShiftInputs();
       const d = S.shiftDraft;
@@ -1526,15 +1674,14 @@
       if (!cfg.days.length) throw new Error('Velg minst én dag med vakt.');
       if (cfg.slots.some((x) => !TIME_RE.test(x.start) || !TIME_RE.test(x.end))) throw new Error('Fyll inn klokkeslett for alle vaktene (TT:MM).');
       if (cfg.slots.some((x) => x.start === x.end)) throw new Error('En vakt kan ikke starte og slutte på samme klokkeslett.');
-      await api.updateSettings({ shifts: cfg });
-      S.settings = await api.settings();
+      S.settings = await saveTeamSettings({ shifts: cfg });
       if (!S.settings || !validShifts(S.settings.shifts)) throw new Error('Vakttidene kunne ikke lagres. Er vakttider.sql kjørt i databasen?');
       S.shiftDraft = null;
       toast('Vakttidene er lagret for alle.');
     },
     async meeting(f) {
-      await api.updateSettings({ meeting_name: f.mname.value.trim(), meeting_address: f.maddress.value.trim(), meeting_note: f.mnote.value.trim() });
-      S.settings = await api.settings(); S.meetingForm = false;
+      S.settings = await saveTeamSettings({ meeting_name: f.mname.value.trim(), meeting_address: f.maddress.value.trim(), meeting_note: f.mnote.value.trim() });
+      S.meetingForm = false;
       toast('Oppmøtestedet er lagret.');
     },
     async profile(f) {
@@ -1548,6 +1695,18 @@
     }
   };
   const changes = {
+    'team-view'(el) { S.viewTeam = el.value; S.mapView = null; S.shiftDraft = null; S.mapEdit = false; render(); },
+    'my-team'(el) {
+      const t = teamById(el.value); const old = myTeamId();
+      const warn = isCoordOf(old) && !isAdmin() ? ' Du mister koordinatorrollen i det gamle laget.' : '';
+      if (!confirm(`Bytte til laget «${t.name}»? Vaktene du har booket blir liggende i det gamle laget.${warn}`)) { el.value = old; return; }
+      run(async () => { await api.setTeam(S.user.id, el.value); await reloadTeamsAndProfiles(); S.viewTeam = myTeamId(); }, 'Du har byttet lag.');
+    },
+    'person-team'(el) {
+      const p = S.profiles[el.dataset.id]; const t = teamById(el.value);
+      if (!confirm(`Flytte ${p.full_name} til «${t.name}»?`)) { el.value = p.team_id || ''; return; }
+      run(async () => { await api.setTeam(p.id, el.value); await reloadTeamsAndProfiles(); }, 'Flyttet.');
+    },
     notify(el) {
       const v = Object.assign({}, S.notify, { [el.dataset.key]: el.checked }); S.notify = v;
       api.updateNotify(v).then(() => toast('Lagret.')).catch((e) => { toast(errText(e), true); });

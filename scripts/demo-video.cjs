@@ -164,14 +164,16 @@ body{zoom:${Z}}
     await type(page.getByLabel('Telefon'), '481 22 333');
     await s.done();
     await tap(page.getByRole('button', { name: 'Opprett konto' }), 700);
+    await page.getByRole('heading', { name: 'Velg ditt lag' }).waitFor();
+    await tap(page.getByRole('button', { name: /Byåsen – Hallset/ }), 700);
     await page.getByRole('heading', { level: 1 }).filter({ hasText: 'Ingrid' }).waitFor();
     // Gi Ingrid en vakt i går, så vaktrapporten kan vises senere.
     await page.evaluate(() => {
-      const db = JSON.parse(localStorage.getItem('safetly-demo-v1'));
+      const db = JSON.parse(localStorage.getItem('safetly-demo-v2'));
       const d = new Date(); d.setDate(d.getDate() - 1);
       const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      db.bookings.push({ id: 'demo-gaar', user_id: db.session, shift_date: iso, slot: 1 });
-      localStorage.setItem('safetly-demo-v1', JSON.stringify(db));
+      db.bookings.push({ id: 'demo-gaar', user_id: db.session, shift_date: iso, slot: 1, team_id: 'lag1' });
+      localStorage.setItem('safetly-demo-v2', JSON.stringify(db));
     });
     await page.reload();
     await page.getByRole('heading', { level: 1 }).filter({ hasText: 'Ingrid' }).waitFor();

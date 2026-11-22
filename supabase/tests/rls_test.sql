@@ -76,8 +76,8 @@ do $$ begin assert (select count(*) from bookings) = 0, 'koordinator kan fjerne 
 update profiles set role = 'forelder' where full_name = 'Per Berg';
 do $$ begin
   begin
-    update profiles set role = 'forelder' where id = auth.uid();
-    raise exception 'SKULLE FEILET: fjerne siste koordinator';
+    update profiles set is_admin = false where id = auth.uid();
+    raise exception 'SKULLE FEILET: fjerne siste administrator';
   exception when raise_exception then
     if sqlerrm like 'SKULLE%' then raise; end if;
   end;
@@ -175,6 +175,56 @@ select save_push_subscription('https://push.example/abc', 'p256', 'auth2') \g /d
 do $$ begin assert (select count(*) from push_subscriptions) = 1, 'telefonen flyttes til Per når han logger inn'; end $$;
 reset role;
 do $$ begin assert (select user_id from push_subscriptions) = '00000000-0000-0000-0000-00000000000c', 'telefonen tilhører nå Per'; end $$;
+
+-- Lag
+reset role;
+insert into teams (id, name) values ('00000000-0000-0000-0000-0000000000f2', 'Ugla – Dalgård');
+do $$ begin
+  assert (select count(*) from teams) = 2, 'to lag';
+  assert (select count(*) from profiles where team_id is null) = 0, 'alle havnet i første lag';
+  assert (select is_admin from profiles where full_name = 'Kari Nilsen'), 'første koordinator er administrator';
+  assert (select count(*) from bookings where team_id is null) = 0, 'vakter har lag';
+end $$;
+set role authenticated;
+-- Forelder Ola bytter lag og booker der
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000b', false) \g /dev/null
+update profiles set team_id = '00000000-0000-0000-0000-0000000000f2' where id = auth.uid();
+insert into bookings (user_id, shift_date, slot) values (auth.uid(), current_date + 3, 1);
+do $$ begin
+  assert (select team_id from bookings where user_id = auth.uid() and shift_date = current_date + 3) = '00000000-0000-0000-0000-0000000000f2', 'booking får lag automatisk';
+  begin update profiles set is_admin = true where id = auth.uid(); raise exception 'SKULLE FEILET: gjøre seg selv til admin';
+  exception when raise_exception then if sqlerrm like 'SKULLE%' then raise; end if; end;
+  begin insert into teams (name) values ('Mitt lag'); raise exception 'SKULLE FEILET: forelder lager lag';
+  exception when insufficient_privilege then null; end;
+end $$;
+update teams set meeting_name = 'hacket' where true;
+do $$ begin assert (select count(*) from teams where meeting_name = 'hacket') = 0, 'forelder kan ikke endre lag'; end $$;
+-- Admin Kari gjør Per til koordinator i Ugla – Dalgård
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a', false) \g /dev/null
+update profiles set team_id = '00000000-0000-0000-0000-0000000000f2', role = 'koordinator' where full_name = 'Per Berg';
+do $$ begin assert (select role from profiles where full_name = 'Per Berg') = 'koordinator', 'admin flytter og forfremmer'; end $$;
+-- Per (koordinator i Ugla – Dalgård) styrer sitt lag, men ikke det første laget
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000c', false) \g /dev/null
+update teams set meeting_name = 'Ugla skole' where id = '00000000-0000-0000-0000-0000000000f2';
+update teams set meeting_name = 'hacket' where id <> '00000000-0000-0000-0000-0000000000f2';
+do $$ begin
+  assert (select meeting_name from teams where id = '00000000-0000-0000-0000-0000000000f2') = 'Ugla skole', 'koordinator endrer eget lag';
+  assert (select count(*) from teams where meeting_name = 'hacket') = 0, 'koordinator endrer ikke andres lag';
+  assert (select count(*) from private_contacts where user_id = '00000000-0000-0000-0000-00000000000b') = 1, 'Per ser telefonen til Ola i sitt lag';
+  assert (select count(*) from private_contacts where user_id = '00000000-0000-0000-0000-00000000000a') = 0, 'Per ser ikke Karis telefon';
+end $$;
+insert into news (title, body) values ('Ugla-nytt', 'Vakt fredag');
+do $$ begin
+  assert (select team_id from news where title = 'Ugla-nytt') = '00000000-0000-0000-0000-0000000000f2', 'nyhet går til eget lag';
+  begin insert into news (title, body, team_id) values ('x', 'y', (select id from teams where name = 'Byåsen – Hallset')); raise exception 'SKULLE FEILET: nyhet til annet lag';
+  exception when insufficient_privilege then null; end;
+end $$;
+delete from bookings where user_id = '00000000-0000-0000-0000-00000000000b' and shift_date = current_date + 3;
+do $$ begin assert (select count(*) from bookings where user_id = '00000000-0000-0000-0000-00000000000b' and shift_date = current_date + 3) = 0, 'koordinator fjerner fra vakt i eget lag'; end $$;
+-- Per bytter selv lag: mister koordinatorrollen
+update profiles set team_id = (select id from teams where name = 'Byåsen – Hallset') where id = auth.uid();
+do $$ begin assert (select role from profiles where id = auth.uid()) = 'forelder', 'koordinatorrollen følger ikke med til nytt lag'; end $$;
+reset role;
 
 -- Anonym: ingen tilgang
 reset role;

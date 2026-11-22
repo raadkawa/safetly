@@ -8,6 +8,7 @@ Norsk, mobilvennlig app for natteravner i nabolaget. Foreldre kobles sammen for 
 - **Arrangement:** alle kan opprette og trykke «Jeg kommer».
 - **Meldinger:** én-til-én-meldinger mellom alle i nabolaget (bare de to ser dem), og «Til alle» der koordinatorene skriver beskjeder til hele nabolaget. Uleste meldinger vises med tall, og nye meldinger kommer med en gang.
 - **Vaktområde:** kart fra Kartverket med grensen for området, oppmøtested og nummererte sjekkpunkter, avkrysning for kveldens runde og «Vis meg». Koordinatorer kan flytte, legge til og fjerne sjekkpunkter og tegne grensen på nytt. Standardområdet ligger i `www/omrade.js`.
+- **Lag:** flere nabolag i samme app. Hvert lag har egen vaktliste, vakttider, kart, oppmøtested og egne koordinatorer. Meldinger, «Til alle» og arrangementer er felles. Administrator lager lag og flytter foreldre i Kontor; alle kan se andre lags vaktlister, men booker i sitt eget.
 - **Info:** oppmøtested, koordinatorer med telefon, guide, nødnumre, egen innsats, profil, større tekst, lys/mørk modus, logg ut.
 - **Nødhjelp:** knapp øverst på alle sider, med ringeknapper (112, 113, 110, 02800) og huskeliste. Appen varsler ikke nødetatene selv.
 - **Kontor (bare koordinatorer):** åpne vakter, dekning uke for uke, vaktliste per uke, foreldreliste med rolleendring, fjerne forelder fra vakt og CSV-vaktliste.
@@ -48,7 +49,7 @@ npm start
 4. Under **Authentication → URL Configuration**: sett **Site URL** til adressen der nettappen ligger, og legg den til under **Redirect URLs**.
 5. Hent **Project URL** og **anon public key** fra **Project Settings → API**, og fyll dem inn i `www/config.js`. Fyll også inn `siteUrl` og oppmøtestedet.
 
-Har du kjørt `schema.sql` før meldinger og redigerbart oppmøtested kom, kjører du i tillegg `supabase/oppmotested.sql`, `supabase/chat.sql`, `supabase/lest.sql`, `supabase/kart.sql` og `supabase/vakttider.sql`.
+Har du kjørt `schema.sql` før meldinger og redigerbart oppmøtested kom, kjører du i tillegg `supabase/oppmotested.sql`, `supabase/chat.sql`, `supabase/lest.sql`, `supabase/kart.sql`, `supabase/vakttider.sql` og `supabase/lag.sql`.
 
 Den **første** kontoen som opprettes blir koordinator. Alle andre blir foreldre, og en koordinator kan endre roller i Kontor.
 
