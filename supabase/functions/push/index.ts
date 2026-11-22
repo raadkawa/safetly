@@ -57,14 +57,22 @@ const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…'
 
 // ------------------------------------------------------------------ oppsett
 function admin() {
-  return createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
+  // Nye prosjekter har «secret»-nøkler; eldre har service_role. Bruk den som finnes.
+  const key = Deno.env.get('SUPABASE_SECRET_KEY') || Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  if (!key) throw new Error('Mangler hemmelig nøkkel i tjenesten');
+  return createClient(Deno.env.get('SUPABASE_URL')!, key, { auth: { persistSession: false } });
 }
 async function keys(sb: ReturnType<typeof admin>) {
-  let { data } = await sb.from('push_config').select('public_key, private_key').eq('id', 1).maybeSingle();
+  const first = await sb.from('push_config').select('public_key, private_key').eq('id', 1).maybeSingle();
+  if (first.error) throw new Error('push_config: ' + first.error.message);
+  let data = first.data;
   if (!data) {
     const k = webpush.generateVAPIDKeys();
-    await sb.from('push_config').insert({ id: 1, public_key: k.publicKey, private_key: k.privateKey });
-    ({ data } = await sb.from('push_config').select('public_key, private_key').eq('id', 1).maybeSingle());
+    const ins = await sb.from('push_config').insert({ id: 1, public_key: k.publicKey, private_key: k.privateKey });
+    if (ins.error && !/duplicate/i.test(ins.error.message)) throw new Error('push_config lagring: ' + ins.error.message);
+    const again = await sb.from('push_config').select('public_key, private_key').eq('id', 1).maybeSingle();
+    if (again.error || !again.data) throw new Error('push_config: ' + (again.error ? again.error.message : 'tom'));
+    data = again.data;
   }
   webpush.setVapidDetails(SITE, data!.public_key, data!.private_key);
   return data!;
