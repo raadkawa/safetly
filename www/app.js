@@ -955,13 +955,16 @@
     html += `<section class="card" aria-labelledby="foreldre"><div class="between"><h2 id="foreldre" style="font-size:1.25rem">Foreldre</h2><span class="small muted">${people.length} i laget</span></div><div>`;
     people.forEach((p) => {
       const ph = S.phones[p.id];
-      html += `<div class="list-row"><div class="grow stack-s" style="gap:.125rem"><b>${esc(p.full_name || 'Uten navn')}${p.id === S.user.id ? ' (deg)' : ''}</b>
-        ${ph ? `<a class="small muted" href="${esc(telHref(ph))}">${esc(ph)}</a>` : '<span class="small muted">Ingen telefon</span>'}</div>
-        ${p.id !== S.user.id ? `<a class="icon-btn" href="#/chat/${p.id}" aria-label="Skriv melding til ${esc(p.full_name)}">${I.chat(20)}</a>` : ''}
-        <label class="sr-only" for="role-${p.id}">Rolle for ${esc(p.full_name)}</label>
-        <select id="role-${p.id}" class="input" style="width:auto;min-height:2.75rem;border-radius:999px;font-weight:600;font-size:.875rem" data-change="role" data-id="${p.id}">
-          <option value="forelder"${p.role === 'forelder' ? ' selected' : ''}>Forelder</option><option value="koordinator"${p.role === 'koordinator' ? ' selected' : ''}>Koordinator</option></select>
-        ${hasTeams() && isAdmin() && S.teams.length > 1 ? `<label class="sr-only" for="pteam-${p.id}">Lag for ${esc(p.full_name)}</label><select id="pteam-${p.id}" class="input" style="width:auto;max-width:8rem;min-height:2.75rem;border-radius:999px;font-weight:600;font-size:.8125rem" data-change="person-team" data-id="${p.id}">${p.team_id ? '' : '<option value="">Uten lag</option>'}${S.teams.map((t) => `<option value="${t.id}"${t.id === p.team_id ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select>` : ''}</div>`;
+      const teamSel = hasTeams() && isAdmin() && S.teams.length > 1;
+      html += `<div class="person-row">
+        <div class="person-top"><div class="grow stack-s" style="gap:.125rem;min-width:0"><b class="person-name">${esc(p.full_name || 'Uten navn')}${p.id === S.user.id ? ' (deg)' : ''}</b>
+          ${ph ? `<a class="small muted" href="${esc(telHref(ph))}">${esc(ph)}</a>` : '<span class="small muted">Ingen telefon</span>'}</div>
+          ${p.id !== S.user.id ? `<a class="icon-btn" href="#/chat/${p.id}" aria-label="Skriv melding til ${esc(p.full_name)}">${I.chat(20)}</a>` : ''}</div>
+        <div class="person-controls${teamSel ? '' : ' one'}">
+          <label class="mini-field"><span>Rolle</span><select id="role-${p.id}" data-change="role" data-id="${p.id}" aria-label="Rolle for ${esc(p.full_name)}">
+            <option value="forelder"${p.role === 'forelder' ? ' selected' : ''}>Forelder</option><option value="koordinator"${p.role === 'koordinator' ? ' selected' : ''}>Koordinator</option></select></label>
+          ${teamSel ? `<label class="mini-field"><span>Lag</span><select id="pteam-${p.id}" data-change="person-team" data-id="${p.id}" aria-label="Lag for ${esc(p.full_name)}">${p.team_id ? '' : '<option value="">Uten lag</option>'}${S.teams.map((t) => `<option value="${t.id}"${t.id === p.team_id ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select></label>` : ''}
+        </div></div>`;
     });
     html += `</div></section>
       <button type="button" class="pill block" style="min-height:3.5rem" data-act="csv">${I.download()}Last ned vaktliste (CSV, 4 uker)</button>`;
