@@ -1249,9 +1249,30 @@
     ['vakt', 'Påminnelse 2 timer før vakten min'], ['mangler', 'Kl. 17 når kveldens vakt mangler folk']
   ];
   const NOTIFY_DEFAULT = { meldinger: true, alle: true, nyheter: true, vakt: true, mangler: true };
+  // Ekte app: telefonens egne varsler (Apple/Google). Bygget merker seg med «SafetlyPush» når varsler er satt opp.
+  const NativePush = () => (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.PushNotifications) || null;
+  const nativePushReady = () => isNative() && !!NativePush() && /SafetlyPush/.test(navigator.userAgent);
+  const NATIVE_KEY = 'safetly-native-push';
+  function nativeRegister() {
+    const P = NativePush();
+    return new Promise((resolve, reject) => {
+      let done = false;
+      const hs = [];
+      const finish = (fn, v) => { if (done) return; done = true; hs.forEach((h) => h.then((x) => x.remove()).catch(() => {})); fn(v); };
+      hs.push(P.addListener('registration', (t) => finish(resolve, t.value)));
+      hs.push(P.addListener('registrationError', (e) => finish(reject, new Error((e && e.error) || 'Kunne ikke registrere varsler.'))));
+      P.register().catch((e) => finish(reject, e));
+      setTimeout(() => finish(reject, new Error('Fikk ikke svar fra varslingstjenesten. Prøv igjen.')), 15000);
+    });
+  }
+  async function nativeSave(token) {
+    const ep = (window.Capacitor.getPlatform() === 'ios' ? 'apns:' : 'fcm:') + token;
+    await api.savePush(ep, '', '');
+    try { localStorage.setItem(NATIVE_KEY, ep); } catch (e) { /* tom */ }
+  }
   function pushSupport() {
     if (!api.pushReady) return 'demo';
-    if (isNative()) return 'native';
+    if (isNative()) return nativePushReady() ? 'ok' : 'native';
     const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
     const standalone = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
     if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return ios && !standalone ? 'ios-browser' : 'unsupported';
@@ -1262,6 +1283,16 @@
   }
   function b64uToBytes(s) { const p = '='.repeat((4 - s.length % 4) % 4); const b = atob((s + p).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(b, (c) => c.charCodeAt(0)); }
   async function pushOn() {
+    if (isNative()) {
+      const P = NativePush();
+      let perm = await P.checkPermissions();
+      if (perm.receive !== 'granted') perm = await P.requestPermissions();
+      if (perm.receive !== 'granted') { S.pushPerm = 'denied'; throw new Error('Du må tillate varsler for Safetly.'); }
+      await nativeSave(await nativeRegister());
+      S.pushOn = true; S.pushPerm = 'granted';
+      toast('Varsler er slått på. 🔔');
+      return;
+    }
     const perm = await Notification.requestPermission();
     if (perm !== 'granted') { S.pushPerm = perm; throw new Error('Du må trykke «Tillat» for å få varsler.'); }
     const reg = await navigator.serviceWorker.ready;
@@ -1275,6 +1306,13 @@
   }
   async function pushOff(quiet) {
     if (pushSupport() !== 'ok') return;
+    if (isNative()) {
+      let ep = null; try { ep = localStorage.getItem(NATIVE_KEY); } catch (e) { /* tom */ }
+      if (ep) { try { await api.removePush(ep); } catch (e) { if (!quiet) throw e; } }
+      try { localStorage.removeItem(NATIVE_KEY); } catch (e) { /* tom */ }
+      try { await NativePush().unregister(); } catch (e) { /* tom */ }
+      S.pushOn = false; return;
+    }
     const sub = await currentSubscription(); if (!sub) { S.pushOn = false; return; }
     try { await api.removePush(sub.endpoint); } catch (e) { if (!quiet) throw e; }
     try { await sub.unsubscribe(); } catch (e) { /* tom */ }
@@ -1284,6 +1322,15 @@
   async function syncPush() {
     S.notify = Object.assign({}, NOTIFY_DEFAULT, (await api.myNotify().catch(() => null)) || {});
     if (pushSupport() !== 'ok') return;
+    if (isNative()) {
+      const perm = await NativePush().checkPermissions().catch(() => ({ receive: 'prompt' }));
+      S.pushPerm = perm.receive === 'granted' ? 'granted' : perm.receive === 'denied' ? 'denied' : 'default';
+      let ep = null; try { ep = localStorage.getItem(NATIVE_KEY); } catch (e) { /* tom */ }
+      S.pushOn = S.pushPerm === 'granted' && !!ep;
+      if (S.pushOn) nativeRegister().then(nativeSave).catch(() => {}); // fornyer adressen og knytter den til riktig bruker
+      if (route() === 'info') render();
+      return;
+    }
     S.pushPerm = Notification.permission;
     const sub = await currentSubscription();
     S.pushOn = !!sub && S.pushPerm === 'granted';
@@ -1294,7 +1341,7 @@
     const sup = pushSupport();
     let inner;
     if (sup === 'demo') inner = '<p class="small muted">Varsler virker når appen er koblet til nabolagets database.</p>';
-    else if (sup === 'native') inner = `<p>Varsler virker i nettappen. Åpne <b>raadkawa.github.io/safetly</b> i Chrome, trykk ⋮ og <b>Legg til på startskjermen</b>, og slå på varsler der.</p>`;
+    else if (sup === 'native') inner = `<p>Varsler er ikke slått på i denne versjonen av appen ennå. Du kan bruke nettappen i mellomtiden. Åpne <b>raadkawa.github.io/safetly</b> i Chrome, trykk ⋮ og <b>Legg til på startskjermen</b>, og slå på varsler der.</p>`;
     else if (sup === 'ios-browser') inner = `<p>På iPhone må Safetly ligge på Hjem-skjermen for å få varsler:</p>
       <ol class="steps"><li>Trykk Del-knappen (firkanten med pil opp) nederst i Safari.</li><li>Velg <b>Legg til på Hjem-skjerm</b>.</li><li>Åpne Safetly fra Hjem-skjermen og slå på varsler her.</li></ol>
       <p class="small muted">Krever iOS 16.4 eller nyere.</p>`;
@@ -1923,8 +1970,19 @@
       } catch (e) { /* prøver igjen */ }
     }, 20000);
   }
+  function nativePushListeners() {
+    const P = NativePush(); if (!P) return;
+    P.addListener('pushNotificationActionPerformed', (a) => {
+      const url = a && a.notification && a.notification.data && a.notification.data.url;
+      if (url && /^#\//.test(url)) location.hash = url;
+    }).catch(() => {});
+    P.addListener('pushNotificationReceived', (n) => {
+      if (n && n.title) toast(n.title + (n.body ? ': ' + n.body : ''));
+    }).catch(() => {});
+  }
   async function boot() {
     applyPrefs();
+    if (isNative()) nativePushListeners();
     if (!location.hash.startsWith('#/') && !/access_token|type=recovery|error_description/.test(location.hash)) history.replaceState(null, '', '#/vakter');
     S.backRoute = route() === 'nodhjelp' ? '#/vakter' : '#/' + route();
     api.onAuth((user, event) => {

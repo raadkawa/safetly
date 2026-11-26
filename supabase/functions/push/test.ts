@@ -38,3 +38,19 @@ Deno.test('web push blir kryptert og sendt', async () => {
   assertEquals(got.auth?.startsWith('vapid t='), true);
   assertEquals((got.size ?? 0) > 100, true);
 });
+
+import { signJwt } from './index.ts';
+Deno.test('JWT for Apple (ES256) og Google (RS256) kan verifiseres', async () => {
+  for (const alg of ['ES256', 'RS256'] as const) {
+    const params = alg === 'ES256' ? { name: 'ECDSA', namedCurve: 'P-256' } : { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' };
+    const kp = await crypto.subtle.generateKey(params, true, ['sign', 'verify']) as CryptoKeyPair;
+    const der = new Uint8Array(await crypto.subtle.exportKey('pkcs8', kp.privateKey));
+    const pem = '-----BEGIN PRIVATE KEY-----\n' + btoa(String.fromCharCode(...der)).replace(/(.{64})/g, '$1\n') + '\n-----END PRIVATE KEY-----\n';
+    const jwt = await signJwt({ alg, kid: 'ABC' }, { iss: 'TEAM', iat: 1 }, pem, alg);
+    const [h, c, sig] = jwt.split('.');
+    const dec = (x: string) => Uint8Array.from(atob(x.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((x.length + 3) % 4)), (ch) => ch.charCodeAt(0));
+    const ok = await crypto.subtle.verify(alg === 'ES256' ? { name: 'ECDSA', hash: 'SHA-256' } : { name: 'RSASSA-PKCS1-v1_5' }, kp.publicKey, dec(sig), new TextEncoder().encode(h + '.' + c));
+    assertEquals(ok, true);
+    assertEquals(JSON.parse(new TextDecoder().decode(dec(h))).alg, alg);
+  }
+});

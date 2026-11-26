@@ -1,4 +1,4 @@
-name: Android APK
+name: Android (APK og Google Play)
 
 on:
   push:
@@ -32,25 +32,26 @@ jobs:
       - name: Bygg nettappen
         run: npm run build
 
-      - name: Lag Android-prosjekt (hvis det ikke er sjekket inn)
+      - name: Lag Android-prosjekt
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+          BUILD_NUMBER: ${{ github.run_number }}
         run: |
-          # Appen henter innholdet fra nettappen, så alle får nye versjoner uten ny APK.
-          # Uten nett vises www/offline.html med nødnumrene.
-          node -e "const f='capacitor.config.json';const c=JSON.parse(require('fs').readFileSync(f));c.server=Object.assign({},c.server,{url:'https://raadkawa.github.io/safetly/',errorPath:'offline.html'});require('fs').writeFileSync(f,JSON.stringify(c,null,2))"
+          # Android-appen henter innholdet fra nettappen (alle får nye versjoner uten ny app),
+          # og viser www/offline.html med nødnumrene uten nett.
+          node scripts/native-setup.mjs config android
           if [ ! -d android ]; then npx cap add android; fi
           npx capacitor-assets generate --android \
             --iconBackgroundColor '#1C1A16' --iconBackgroundColorDark '#1C1A16' \
             --splashBackgroundColor '#F6F0E4' --splashBackgroundColorDark '#16140F'
           npx cap sync android
-          # «Vis meg» på kartet trenger posisjon
-          M=android/app/src/main/AndroidManifest.xml
-          grep -q ACCESS_FINE_LOCATION "$M" || sed -i 's#</manifest>#    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n</manifest>#' "$M"
+          node scripts/native-setup.mjs android
 
-      - name: Bygg debug-APK
+      - name: Bygg test-APK
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon
 
-      - name: Bygg signert release-APK (bare når nøkkel er lagt inn som secrets)
+      - name: Bygg signert app for Google Play (AAB) og APK
         if: env.HAS_KEYSTORE == 'true'
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -60,16 +61,19 @@ jobs:
         working-directory: android
         run: |
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/safetly.jks"
-          ./gradlew assembleRelease --no-daemon \
+          ALIAS="${KEY_ALIAS:-safetly}"; KPW="${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"
+          ./gradlew bundleRelease assembleRelease --no-daemon \
             -Pandroid.injected.signing.store.file="$RUNNER_TEMP/safetly.jks" \
             -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
-            -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
-            -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
+            -Pandroid.injected.signing.key.alias="$ALIAS" \
+            -Pandroid.injected.signing.key.password="$KPW"
+          rm -f "$RUNNER_TEMP/safetly.jks"
 
       - uses: actions/upload-artifact@v5
         with:
-          name: safetly-apk
+          name: safetly-android
           path: |
             android/app/build/outputs/apk/debug/*.apk
             android/app/build/outputs/apk/release/*.apk
+            android/app/build/outputs/bundle/release/*.aab
           if-no-files-found: warn

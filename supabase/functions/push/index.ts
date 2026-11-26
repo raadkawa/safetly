@@ -56,6 +56,76 @@ export function shiftStartAt(date: string, start: string) { return osloToDate(da
 const shortName = (n: string) => { const p = (n || '').trim().split(/\s+/); return p.length > 1 ? `${p[0]} ${p[p.length - 1][0]}.` : (p[0] || 'Noen'); };
 const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
 
+
+// ------------------------------------------------------------------ varsler til ekte apper
+// Android (Firebase Cloud Messaging) krever secret FIREBASE_SERVICE_ACCOUNT (JSON fra Firebase).
+// iPhone (Apple Push Notification service) krever APNS_KEY_P8, APNS_KEY_ID og APPLE_TEAM_ID.
+const b64u = (b: Uint8Array | string) => {
+  const bytes = typeof b === 'string' ? new TextEncoder().encode(b) : b;
+  let s = ''; for (const x of bytes) s += String.fromCharCode(x);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+};
+function pemToDer(pem: string) {
+  const body = pem.replace(/-----[^-]+-----/g, '').replace(/\s+/g, '');
+  return Uint8Array.from(atob(body), (c) => c.charCodeAt(0));
+}
+export async function signJwt(header: object, claims: object, pem: string, alg: 'RS256' | 'ES256') {
+  const input = b64u(JSON.stringify(header)) + '.' + b64u(JSON.stringify(claims));
+  const key = await crypto.subtle.importKey('pkcs8', pemToDer(pem),
+    alg === 'RS256' ? { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' } : { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign(alg === 'RS256' ? { name: 'RSASSA-PKCS1-v1_5' } : { name: 'ECDSA', hash: 'SHA-256' }, key, new TextEncoder().encode(input));
+  return input + '.' + b64u(new Uint8Array(sig));
+}
+let fcmCache: { token: string; exp: number; project: string } | null = null;
+async function fcmAccess() {
+  const raw = Deno.env.get('FIREBASE_SERVICE_ACCOUNT');
+  if (!raw) return null;
+  if (fcmCache && fcmCache.exp > Date.now() + 60000) return fcmCache;
+  const sa = JSON.parse(raw);
+  const now = Math.floor(Date.now() / 1000);
+  const jwt = await signJwt({ alg: 'RS256', typ: 'JWT' }, { iss: sa.client_email, scope: 'https://www.googleapis.com/auth/firebase.messaging', aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 }, sa.private_key, 'RS256');
+  const r = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: jwt }) });
+  const j = await r.json();
+  if (!j.access_token) throw new Error('Firebase-innlogging feilet: ' + JSON.stringify(j).slice(0, 200));
+  fcmCache = { token: j.access_token, exp: Date.now() + (j.expires_in || 3600) * 1000, project: sa.project_id };
+  return fcmCache;
+}
+// Svarer 'gone' når telefonen ikke lenger finnes (da slettes den), ellers 'ok' eller 'error'.
+async function sendFcm(token: string, p: Payload): Promise<'ok' | 'gone' | 'error'> {
+  const a = await fcmAccess(); if (!a) return 'error';
+  const r = await fetch(`https://fcm.googleapis.com/v1/projects/${a.project}/messages:send`, {
+    method: 'POST', headers: { Authorization: 'Bearer ' + a.token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: {
+      token, notification: { title: p.title, body: p.body }, data: { url: p.url || '', tag: p.tag || '' },
+      android: { priority: 'HIGH', notification: { tag: p.tag || undefined, icon: 'ic_stat_safetly', color: '#1C1A16', default_sound: true } }
+    } })
+  });
+  if (r.ok) return 'ok';
+  const t = await r.text();
+  if (r.status === 404 || /UNREGISTERED|INVALID_ARGUMENT.*registration/i.test(t)) return 'gone';
+  console.error('FCM', r.status, t.slice(0, 300));
+  return 'error';
+}
+let apnsCache: { jwt: string; exp: number } | null = null;
+async function sendApns(token: string, p: Payload): Promise<'ok' | 'gone' | 'error'> {
+  const key = Deno.env.get('APNS_KEY_P8'); const kid = Deno.env.get('APNS_KEY_ID'); const team = Deno.env.get('APPLE_TEAM_ID');
+  if (!key || !kid || !team) return 'error';
+  if (!apnsCache || apnsCache.exp < Date.now()) {
+    apnsCache = { jwt: await signJwt({ alg: 'ES256', kid }, { iss: team, iat: Math.floor(Date.now() / 1000) }, key, 'ES256'), exp: Date.now() + 40 * 60 * 1000 };
+  }
+  const host = Deno.env.get('APNS_SANDBOX') === 'true' ? 'api.sandbox.push.apple.com' : 'api.push.apple.com';
+  const r = await fetch(`https://${host}/3/device/${token}`, {
+    method: 'POST',
+    headers: { authorization: 'bearer ' + apnsCache.jwt, 'apns-topic': Deno.env.get('APNS_TOPIC') || 'no.safetly.app', 'apns-push-type': 'alert', 'apns-priority': '10', 'content-type': 'application/json' },
+    body: JSON.stringify({ aps: { alert: { title: p.title, body: p.body }, sound: 'default', 'thread-id': p.tag || 'safetly' }, url: p.url || '' })
+  });
+  if (r.ok) return 'ok';
+  const t = await r.text();
+  if (r.status === 410 || /BadDeviceToken|Unregistered/.test(t)) return 'gone';
+  console.error('APNs', r.status, t.slice(0, 300));
+  return 'error';
+}
+
 // ------------------------------------------------------------------ oppsett
 function admin() {
   // Nye prosjekter har «secret»-nøkler; eldre har service_role. Bruk den som finnes.
@@ -95,6 +165,12 @@ async function send(sb: ReturnType<typeof admin>, userIds: string[], pref: strin
   const { data: subs } = await sb.from('push_subscriptions').select('endpoint, user_id, p256dh, auth').in('user_id', ids);
   let sent = 0;
   await Promise.all((subs as Sub[] || []).map(async (s) => {
+    if (s.endpoint.startsWith('fcm:') || s.endpoint.startsWith('apns:')) {
+      const res = s.endpoint.startsWith('fcm:') ? await sendFcm(s.endpoint.slice(4), payload) : await sendApns(s.endpoint.slice(5), payload);
+      if (res === 'ok') sent++;
+      else if (res === 'gone') await sb.from('push_subscriptions').delete().eq('endpoint', s.endpoint);
+      return;
+    }
     try {
       await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, JSON.stringify(payload), { TTL: 60 * 60 * 6, urgency: 'high' });
       sent++;

@@ -42,6 +42,7 @@ jobs:
       KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
       ISSUER: ${{ secrets.APPSTORE_ISSUER_ID }}
       BUILD_NUMBER: ${{ github.run_number }}
+      PUSH_IOS: ${{ secrets.APNS_KEY_ID != '' && '1' || '0' }}
     steps:
       - uses: actions/checkout@v5
 
@@ -57,11 +58,13 @@ jobs:
 
       - name: Lag iOS-prosjekt
         run: |
+          node scripts/native-setup.mjs config ios
           if [ ! -d ios ]; then npx cap add ios; fi
           npx capacitor-assets generate --ios \
             --iconBackgroundColor '#1C1A16' --iconBackgroundColorDark '#1C1A16' \
             --splashBackgroundColor '#F6F0E4' --splashBackgroundColorDark '#16140F'
           npx cap sync ios
+          node scripts/native-setup.mjs ios
           PLIST=ios/App/App/Info.plist
           /usr/libexec/PlistBuddy -c "Delete :ITSAppUsesNonExemptEncryption" "$PLIST" 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$PLIST"
@@ -86,8 +89,9 @@ jobs:
             -allowProvisioningUpdates \
             -authenticationKeyPath "$KEY_PATH" -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER" \
             DEVELOPMENT_TEAM="$TEAM" CODE_SIGN_STYLE=Automatic \
+            CODE_SIGN_ENTITLEMENTS=App/App.entitlements \
             PRODUCT_BUNDLE_IDENTIFIER=no.safetly.app \
-            MARKETING_VERSION=1.0.0 CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            MARKETING_VERSION="1.0.$BUILD_NUMBER" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
             archive | tail -n 40
 
       - name: Last opp til TestFlight
