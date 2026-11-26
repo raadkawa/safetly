@@ -106,6 +106,17 @@ fs.mkdirSync(OUT, { recursive: true });
     await page.locator('.receipt', { hasText: 'Sendt' }).waitFor();
     await page.locator('.receipt.seen', { hasText: /^Sett \d\d:\d\d/ }).waitFor({ timeout: 10000 });
     await shot('06b-chat-samtale');
+    // Rapportere og blokkere
+    await page.getByRole('button', { name: /^Valg for meldingen fra Kari/ }).first().click();
+    await page.getByRole('button', { name: 'Rapporter meldingen' }).click();
+    await page.getByText('Meldingen er rapportert', { exact: false }).waitFor();
+    await page.getByRole('button', { name: 'Flere valg for samtalen' }).click();
+    await page.getByRole('button', { name: /^Blokker Kari/ }).click();
+    await page.getByText('Du har blokkert', { exact: false }).waitFor();
+    if (await page.locator('textarea[data-autogrow]').count()) throw new Error('kan skrive til blokkert person');
+    await page.getByRole('button', { name: 'Opphev blokkering' }).first().click();
+    await page.getByText('Blokkeringen er opphevet.').waitFor();
+    await page.locator('textarea[data-autogrow]').waitFor();
     await page.getByRole('link', { name: 'Tilbake til meldinger' }).click();
     if (await page.locator('.chat-row', { hasText: 'Kari Nilsen' }).locator('.count-pill').count()) throw new Error('samtalen med Kari er fortsatt ulest etter lesing');
     await page.getByRole('link', { name: /Til alle/ }).click();
@@ -188,6 +199,9 @@ fs.mkdirSync(OUT, { recursive: true });
     const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: /Last ned vaktliste/ }).click()]);
     const csv = fs.readFileSync(await download.path(), 'utf8');
     if (!csv.includes('Dato;Ukedag;Uke;Vakt')) throw new Error('CSV mangler overskrift');
+    await page.getByRole('heading', { name: 'Rapporterte meldinger' }).waitFor();
+    await page.getByRole('button', { name: 'Slett meldingen' }).first().click();
+    await page.getByText('Meldingen er slettet.').waitFor();
     step(`kontor: fjern fra vakt, rolle endret, CSV (${csv.split('\n').length - 1} vakter)`);
     // Vakttider
     const vt = page.locator('section:has(#vt), form:has(#vt)');
@@ -285,8 +299,21 @@ fs.mkdirSync(OUT, { recursive: true });
     if (await page.getByRole('button', { name: 'Rediger kart' }).count()) throw new Error('forelder kan redigere kartet');
     await page.getByRole('navigation', { name: 'Hovedmeny' }).getByRole('link', { name: 'Vakter' }).click();
     step('forelder ser det lagrede kartet, men kan ikke redigere');
+    // Slette konto
+    await page.getByRole('navigation', { name: 'Hovedmeny' }).getByRole('link', { name: 'Info' }).click();
+    await page.getByRole('button', { name: 'Slett kontoen min' }).click();
+    await page.getByText('Kontoen din er slettet.').waitFor();
+    await page.getByRole('button', { name: 'Ny konto' }).waitFor();
+    await page.locator('#tab-login').click();
+    await page.getByLabel('E-post').fill('ola@eksempel.no'); await page.getByLabel('Passord').fill('hemmelig2');
+    await page.locator('form[data-form="login"] button[type="submit"]').click();
+    await page.getByText('Feil e-post eller passord.').waitFor();
+    step('meldinger kan rapporteres og blokkeres, og konto kan slettes');
 
-    // Tastatur: hopp til innhold
+    // Tastatur: hopp til innhold (logg inn igjen som Ingrid)
+    await page.getByLabel('E-post').fill('ingrid@eksempel.no'); await page.getByLabel('Passord').fill('hemmelig1');
+    await page.locator('form[data-form="login"] button[type="submit"]').click();
+    await page.locator('nav.nav').waitFor();
     await page.reload();
     await page.locator('nav.nav').waitFor();
     await page.keyboard.press('Tab');
@@ -304,7 +331,8 @@ fs.mkdirSync(OUT, { recursive: true });
     if (small.length) console.log('  (små mål: ' + small.join(', ') + ')');
 
     if (hitSupabase) throw new Error('Testen prøvde å nå Supabase. Den skal kjøre i demomodus.');
-    if (errors.length) throw new Error('Feil i konsollen:\n' + errors.join('\n'));
+    const realErrors = errors.filter((e) => !/Invalid login credentials/.test(e)); // forventet: innlogging med slettet konto
+    if (realErrors.length) throw new Error('Feil i konsollen:\n' + realErrors.join('\n'));
     console.log(`\nALLE TESTER OK. Skjermbilder i ${OUT}`);
   } catch (e) {
     await shot('feil').catch(() => {});

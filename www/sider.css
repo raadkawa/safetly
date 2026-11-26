@@ -1,0 +1,18 @@
+/* Stil for personvern- og støttesidene */
+@font-face { font-family: Figtree; font-weight: 400; src: url(fonts/figtree-400.woff2) format('woff2'); }
+@font-face { font-family: Figtree; font-weight: 700; src: url(fonts/figtree-700.woff2) format('woff2'); }
+@font-face { font-family: Bricolage; font-weight: 800; src: url(fonts/bricolage-800.woff2) format('woff2'); }
+:root { --bg: #F6F0E4; --surface: #FFFCF6; --ink: #1C1A16; --muted: #5A5449; --yellow: #F5E2A0; color-scheme: light dark; }
+@media (prefers-color-scheme: dark) { :root { --bg: #16140F; --surface: #221F19; --ink: #F2ECE0; --muted: #BDB4A4; --yellow: #40361A; } }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 400 17px/1.6 Figtree, system-ui, sans-serif; }
+main { max-width: 42rem; margin: 0 auto; padding: 24px 20px 64px; }
+h1 { font-family: Bricolage, Figtree, sans-serif; font-weight: 800; font-size: 2.1rem; line-height: 1.15; margin: 16px 0 8px; }
+h2 { font-family: Bricolage, Figtree, sans-serif; font-size: 1.3rem; margin: 32px 0 8px; }
+a { color: var(--ink); }
+.tilbake { display: inline-block; min-height: 44px; line-height: 44px; font-weight: 700; text-decoration: none; }
+.ingress { font-size: 1.1rem; }
+.liten { font-size: .9rem; color: var(--muted); }
+.kort { background: var(--yellow); border-radius: 24px; padding: 4px 20px 12px; margin: 24px 0; }
+li { margin: 6px 0; }
+details { background: var(--surface); border-radius: 16px; padding: 12px 16px; margin: 8px 0; }
+summary { font-weight: 700; cursor: pointer; min-height: 28px; }

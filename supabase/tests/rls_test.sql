@@ -226,6 +226,30 @@ update profiles set team_id = (select id from teams where name = 'Byåsen – Ha
 do $$ begin assert (select role from profiles where id = auth.uid()) = 'forelder', 'koordinatorrollen følger ikke med til nytt lag'; end $$;
 reset role;
 
+-- Blokkere og rapportere
+set role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000c', false) \g /dev/null
+insert into blocks (blocked_id) values ('00000000-0000-0000-0000-00000000000b');
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000b', false) \g /dev/null
+do $$ begin
+  assert (select count(*) from blocks) = 0, 'Ola ser ikke at Per har blokkert ham';
+  begin insert into messages (recipient_id, body) values ('00000000-0000-0000-0000-00000000000c', 'hei igjen'); raise exception 'SKULLE FEILET: blokkert sender';
+  exception when insufficient_privilege then null; end;
+end $$;
+insert into messages (recipient_id, body) values ('00000000-0000-0000-0000-00000000000a', 'Stygg melding');
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a', false) \g /dev/null
+insert into content_reports (message_id, reported_user, message_text, reason)
+  select id, sender_id, body, 'Ufin' from messages where body = 'Stygg melding';
+do $$ begin assert (select count(*) from content_reports) = 1, 'admin ser rapporten'; end $$;
+delete from messages where body = 'Stygg melding';
+do $$ begin
+  assert (select count(*) from messages where body = 'Stygg melding') = 0, 'admin sletter rapportert melding';
+  assert (select message_text from content_reports limit 1) = 'Stygg melding', 'rapporten beholder teksten';
+end $$;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000c', false) \g /dev/null
+do $$ begin assert (select count(*) from content_reports) = 0, 'forelder ser ikke andres rapporter'; end $$;
+reset role;
+
 -- Anonym: ingen tilgang
 reset role;
 set role anon;

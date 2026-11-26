@@ -382,3 +382,12 @@ button.chat-row { width: 100%; border: 0; font: inherit; color: inherit; cursor:
 .person-controls.one { grid-template-columns: minmax(0, 1fr); max-width: 14rem; }
 .mini-field { display: flex; flex-direction: column; gap: .25rem; font-size: .75rem; font-weight: 700; color: var(--muted); min-width: 0; }
 .mini-field select { width: 100%; min-height: 2.75rem; border: 2px solid var(--ink); border-radius: 999px; padding: 0 .875rem; font: 600 .875rem Figtree, sans-serif; background: var(--surface); color: var(--ink); text-overflow: ellipsis; }
+
+/* Meny for meldinger, rapportering og sletting */
+.menu-card { margin-top: .5rem; padding: .375rem; gap: .125rem; }
+.menu-item { min-height: 2.75rem; border: 0; background: transparent; color: var(--ink); text-align: left; padding: 0 .875rem; border-radius: .875rem; font-weight: 600; cursor: pointer; }
+.menu-item:hover { background: var(--line); }
+.msg-more { display: inline-grid; place-items: center; width: 2.75rem; height: 2rem; margin: -.5rem -.5rem -.5rem 0; border: 0; background: transparent; color: var(--muted); cursor: pointer; vertical-align: middle; border-radius: 999px; }
+.msg-more:hover { background: var(--line); color: var(--ink); }
+.msg-actions { display: flex; gap: .375rem; flex-wrap: wrap; margin: .25rem 0 .25rem .5rem; }
+.danger-link { color: var(--sos); }

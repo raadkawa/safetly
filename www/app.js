@@ -100,6 +100,7 @@
     alert: () => svg('<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5v.01"/>', { s: 22, w: 2.2 }),
     pen: () => svg('<path d="M4 20h4L19 9l-4-4L4 16z"/>', { s: 20 }),
     chat: (s) => svg('<path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4.5 3.5V17h0A2.5 2.5 0 0 1 4 14.5z"/>', { s: s || 22 }),
+    more: (s) => `<svg aria-hidden="true" width="${s || 20}" height="${s || 20}" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>`,
     check: () => svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>', { s: 14, w: 2.6 }),
     checks: () => svg('<path d="M2.5 12.5l4.5 4.5 9-9.5M9.5 16l1 1 9-9.5"/>', { s: 16, w: 2.4 }),
     send: () => svg('<path d="M5 12h13M13 6l6 6-6 6"/>', { s: 22, w: 2.4 }),
@@ -196,6 +197,18 @@
       async removePush(endpoint) { ok(await sb.from('push_subscriptions').delete().eq('endpoint', endpoint)); },
       async myNotify() { const r = await sb.from('profiles').select('notify').eq('id', userId).maybeSingle(); return r.error ? null : (r.data && r.data.notify) || null; },
       async updateNotify(v) { ok(await sb.from('profiles').update({ notify: v }).eq('id', userId)); },
+      async deleteAccount() {
+        const r = await sb.functions.invoke('push', { body: { type: 'delete-account' } });
+        if (r.error) throw r.error; if (r.data && r.data.error) throw new Error(r.data.error);
+        await sb.auth.signOut();
+      },
+      async blocks() { const r = await sb.from('blocks').select('blocked_id'); return r.error ? [] : r.data.map((x) => x.blocked_id); },
+      async block(id) { ok(await sb.from('blocks').insert({ user_id: userId, blocked_id: id })); },
+      async unblock(id) { ok(await sb.from('blocks').delete().eq('user_id', userId).eq('blocked_id', id)); },
+      async reportContent(r) { ok(await sb.from('content_reports').insert(Object.assign({ reporter_id: userId }, r))); },
+      async contentReports() { const r = await sb.from('content_reports').select('*').eq('status', 'ny').order('created_at', { ascending: false }); return r.error ? [] : r.data; },
+      async resolveReport(id) { ok(await sb.from('content_reports').update({ status: 'behandlet' }).eq('id', id)); },
+      async deleteMessage(id) { ok(await sb.from('messages').delete().eq('id', id)); },
       async messages() { return ok(await sb.from('messages').select('id,sender_id,recipient_id,body,created_at').order('created_at', { ascending: false }).limit(500)).reverse(); },
       async sendMessage(recipientId, body) { return ok(await sb.from('messages').insert({ sender_id: userId, recipient_id: recipientId, body }).select('id,sender_id,recipient_id,body,created_at').single()); },
       async reads() { return ok(await sb.from('chat_reads').select('thread,last_read_at')); },
@@ -347,6 +360,21 @@
       async savePush() {}, async removePush() {},
       async myNotify() { return need().notify || null; },
       async updateNotify(v) { need().notify = v; save(); },
+      async deleteAccount() {
+        const m = need();
+        if (m.is_admin && db.users.filter((u) => u.is_admin).length <= 1 && db.users.length > 1) throw new Error('Du er eneste administrator. Gjør en annen til administrator før du sletter kontoen.');
+        const id = m.id;
+        db.users = db.users.filter((u) => u.id !== id); db.bookings = db.bookings.filter((b) => b.user_id !== id);
+        db.messages = (db.messages || []).filter((x) => x.sender_id !== id && x.recipient_id !== id);
+        db.session = null; save(); emit('SIGNED_OUT');
+      },
+      async blocks() { const m = need(); return (db.blocks || []).filter((b) => b.user_id === m.id).map((b) => b.blocked_id); },
+      async block(id) { const m = need(); (db.blocks = db.blocks || []).push({ user_id: m.id, blocked_id: id }); save(); },
+      async unblock(id) { const m = need(); db.blocks = (db.blocks || []).filter((b) => !(b.user_id === m.id && b.blocked_id === id)); save(); },
+      async reportContent(r) { const m = need(); (db.creports = db.creports || []).push(Object.assign({ id: uid(), reporter_id: m.id, status: 'ny', created_at: new Date().toISOString() }, r)); save(); },
+      async contentReports() { const m = need(); return m.is_admin ? (db.creports || []).filter((r) => r.status === 'ny') : []; },
+      async resolveReport(id) { const r = (db.creports || []).find((x) => x.id === id); if (r) r.status = 'behandlet'; save(); },
+      async deleteMessage(id) { db.messages = (db.messages || []).filter((x) => x.id !== id); save(); },
       async peerReads() { const m = need(); const r = db.reads || {}; return Object.keys(r).filter((u) => u !== m.id && r[u][m.id]).map((u) => ({ user_id: u, last_read_at: r[u][m.id] })); },
       async alleReadTimes() { const m = need(); if (m.role !== 'koordinator') return []; const r = db.reads || {}; return Object.keys(r).filter((u) => u !== m.id && r[u].alle).map((u) => r[u].alle); },
       onRead(cb) { readCbs.push(cb); return () => { readCbs = readCbs.filter((x) => x !== cb); }; },
@@ -420,7 +448,7 @@
     eventForm: false, newsForm: false, meetingForm: false, shiftDraft: null, settings: null, mapEdit: false, mapDraft: null, mapAdd: false, mapDraw: false, mapView: null, kontorWeek: weekStart(today()),
     theme: prefs.theme || 'auto', big: !!prefs.big,
     busy: false, lastRoute: null, backRoute: '#/vakter',
-    messages: [], reads: {}, chatBottom: false, pushOn: false, pushPerm: 'default', notify: null, peerReads: {}, alleReads: []
+    messages: [], reads: {}, chatBottom: false, blocked: new Set(), creports: [], msgMenu: null, threadMenu: false, pushOn: false, pushPerm: 'default', notify: null, peerReads: {}, alleReads: []
   };
   function savePrefs() { try { localStorage.setItem('safetly-prefs', JSON.stringify({ theme: S.theme, big: S.big })); } catch (e) { /* tom */ } }
   function applyPrefs() {
@@ -514,11 +542,13 @@
     S.contacts = contacts || []; S.bookings = bookings; S.myBookings = mine; S.news = news; S.reports = reports;
     S.myReports = myReports; S.events = events; S.attendees = attendees;
     try {
-      const [msgs, reads] = await Promise.all([api.messages(), api.reads()]);
+      const [msgs, reads, blocked] = await Promise.all([api.messages(), api.reads(), api.blocks().catch(() => [])]);
+      S.blocked = new Set(blocked || []);
       S.messages = msgs; S.reads = {}; reads.forEach((r) => { S.reads[r.thread] = r.last_read_at; });
       await loadReceipts();
     } catch (e) { S.messages = []; S.reads = {}; } // før meldingstabellene finnes
     S.me = S.profiles[S.user.id] || null;
+    S.creports = (S.me && S.me.is_admin) ? await api.contentReports().catch(() => []) : [];
     if (S.me && !teamById(S.viewTeam)) S.viewTeam = myTeamId();
     if (hasTeams()) syncTeamSettings();
     S.loaded = true; S.loadError = S.me ? null : 'Fant ikke profilen din. Kjør supabase/schema.sql og prøv igjen.';
@@ -903,6 +933,8 @@
           <div class="tabs">${[['auto', 'System'], ['light', 'Lys'], ['dark', 'Mørk']].map(([v, l]) => `<button type="button" id="theme-${v}" data-act="theme" data-v="${v}" aria-pressed="${S.theme === v}">${l}</button>`).join('')}</div></div>
       </div>
       <button type="button" class="pill ghost self-start" data-act="logout">Logg ut</button>
+      <button type="button" class="link-btn self-start danger-link" data-act="delete-account">Slett kontoen min</button>
+      <p class="small muted"><a href="personvern.html">Personvern</a> · <a href="support.html">Hjelp og kontakt</a></p>
     </section>`;
     if (isCoordOf(myTeamId())) html += `<a class="card ink tight" href="#/kontor" style="text-decoration:none;flex-direction:row;align-items:center;justify-content:space-between;min-height:4rem"><b>Kontor for koordinatorer</b>${I.right()}</a>`;
     return html;
@@ -968,6 +1000,18 @@
     });
     html += `</div></section>
       <button type="button" class="pill block" style="min-height:3.5rem" data-act="csv">${I.download()}Last ned vaktliste (CSV, 4 uker)</button>`;
+    if (isAdmin()) {
+      html += `<section class="card${S.creports.length ? ' pink' : ''}" aria-labelledby="rapp-h"><h2 id="rapp-h" style="font-size:1.25rem">Rapporterte meldinger</h2>
+        ${S.creports.length ? S.creports.map((r) => `<div class="card tight">
+          <p class="small muted">${esc(fmtStamp(r.created_at))} · rapportert av ${esc(nameOf(r.reporter_id))}</p>
+          ${r.reported_user ? `<p><b>Gjelder:</b> ${esc((S.profiles[r.reported_user] || {}).full_name || 'Slettet bruker')}</p>` : ''}
+          ${r.message_text ? `<p class="pre" style="border-left:3px solid var(--ink);padding-left:.625rem">${esc(r.message_text)}</p>` : ''}
+          ${r.reason ? `<p class="small"><b>Grunn:</b> ${esc(r.reason)}</p>` : ''}
+          <div class="wrap-row">${r.message_id ? `<button type="button" class="pill sm danger" data-act="creport-delete" data-id="${r.id}" data-msg="${r.message_id}">Slett meldingen</button>` : ''}
+            ${r.reported_user && S.profiles[r.reported_user] ? `<a class="pill ghost sm" href="#/chat/${r.reported_user}">Skriv til personen</a>` : ''}
+            <button type="button" class="pill ghost sm" data-act="creport-done" data-id="${r.id}">Ferdig</button></div></div>`).join('')
+          : '<p class="small muted">Ingen nye rapporter. Brukere kan rapportere meldinger og personer fra meldingene.</p>'}</section>`;
+    }
     if (hasTeams() && isAdmin()) {
       const t = curTeam();
       html += `<section class="card" aria-labelledby="lag-h"><h2 id="lag-h" style="font-size:1.25rem">Lag</h2>
@@ -1070,7 +1114,7 @@
     const joined = Date.parse((S.me && S.me.created_at) || '') || 0;
     return new Date(joined - 7 * 86400000).toISOString();
   }
-  function unreadIn(thread) { const base = Date.parse(readBaseline(thread)) || 0; return S.messages.filter((m) => threadOf(m) === thread && m.sender_id !== S.user.id && Date.parse(m.created_at) > base).length; }
+  function unreadIn(thread) { const base = Date.parse(readBaseline(thread)) || 0; return S.messages.filter((m) => threadOf(m) === thread && m.sender_id !== S.user.id && !S.blocked.has(m.sender_id) && Date.parse(m.created_at) > base).length; }
   function unreadTotal() {
     if (!S.user || !S.loaded) return 0;
     const seen = {}; let n = 0;
@@ -1104,7 +1148,7 @@
     if (param) return viewThread(param);
     const last = {};
     S.messages.forEach((m) => { last[threadOf(m)] = m; });
-    const threads = Object.keys(last).filter((t) => t !== 'alle' && S.profiles[t]).sort((a, b) => Date.parse(last[b].created_at) - Date.parse(last[a].created_at));
+    const threads = Object.keys(last).filter((t) => t !== 'alle' && S.profiles[t] && !S.blocked.has(t)).sort((a, b) => Date.parse(last[b].created_at) - Date.parse(last[a].created_at));
     const row = (t) => {
       const m = last[t]; const n = unreadIn(t);
       const who = m ? (m.sender_id === S.user.id ? 'Du: ' : (t === 'alle' ? shortName((S.profiles[m.sender_id] || {}).full_name) + ': ' : '')) : '';
@@ -1130,13 +1174,18 @@
   }
   function viewThread(thread) {
     if (thread !== 'alle' && !S.profiles[thread]) return `<a href="#/chat" class="row back-link">${I.left()}Meldinger</a><p class="empty">Fant ikke denne personen.</p>`;
-    const msgs = S.messages.filter((m) => threadOf(m) === thread);
+    const isBlocked = thread !== 'alle' && S.blocked.has(thread);
+    const msgs = S.messages.filter((m) => threadOf(m) === thread && (m.sender_id === S.user.id || !S.blocked.has(m.sender_id)));
     if (unreadIn(thread)) { S.reads[thread] = new Date().toISOString(); api.markRead(thread).catch(() => {}); }
     const p = S.profiles[thread] || {};
     const sub = thread === 'alle' ? 'Koordinatorene skriver, alle leser' : (p.role === 'koordinator' ? 'Koordinator' : 'Forelder');
     let html = `<div class="chat-head">
       <a href="#/chat" class="icon-btn plain" aria-label="Tilbake til meldinger">${I.left()}</a>${chatAvatar(thread, true)}
-      <div class="grow"><h1 tabindex="-1" style="font-size:1.25rem">${esc(threadName(thread))}</h1><p class="small muted">${esc(sub)}</p></div></div>
+      <div class="grow"><h1 tabindex="-1" style="font-size:1.25rem">${esc(threadName(thread))}</h1><p class="small muted">${esc(sub)}</p></div>
+      ${thread !== 'alle' ? `<button type="button" class="icon-btn plain" data-act="thread-menu" aria-expanded="${S.threadMenu}" aria-label="Flere valg for samtalen">${I.more()}</button>` : ''}</div>
+      ${thread !== 'alle' && S.threadMenu ? `<div class="card tight menu-card">
+        <button type="button" class="menu-item" data-act="${isBlocked ? 'unblock' : 'block'}" data-id="${thread}">${isBlocked ? 'Opphev blokkering' : `Blokker ${esc(shortName(p.full_name))}`}</button>
+        <button type="button" class="menu-item" data-act="report-user" data-id="${thread}">Rapporter ${esc(shortName(p.full_name))}</button></div>` : ''}
       <ol class="bubbles" aria-label="Meldinger" aria-live="polite">`;
     let lastDay = '';
     const mineMsgs = msgs.filter((m) => m.sender_id === S.user.id);
@@ -1160,11 +1209,15 @@
       html += `<li class="bubble-row ${mine ? 'mine' : 'theirs'}${thread === 'alle' && !mine ? ' alle' : ''}">
         ${showName ? `<span class="small muted bubble-name">${esc((S.profiles[m.sender_id] || {}).full_name || 'Koordinator')}</span>` : ''}
         <div class="bubble"><span class="sr-only">${mine ? 'Du' : esc(nameOf(m.sender_id))} skrev: </span><p class="pre">${esc(m.body)}</p></div>
-        <span class="bubble-time">${pad(d.getHours())}:${pad(d.getMinutes())}${receipt ? ' · ' : ''}${receipt}</span></li>`;
+        <span class="bubble-time">${pad(d.getHours())}:${pad(d.getMinutes())}${receipt ? ' · ' : ''}${receipt}${mine ? '' : `<button type="button" class="msg-more" data-act="msg-menu" data-id="${m.id}" aria-expanded="${S.msgMenu === m.id}" aria-label="Valg for meldingen fra ${esc(nameOf(m.sender_id))}">${I.more(16)}</button>`}</span>
+        ${!mine && S.msgMenu === m.id ? `<span class="msg-actions"><button type="button" class="pill ghost sm" data-act="report-msg" data-id="${m.id}">Rapporter meldingen</button>${thread !== 'alle' ? `<button type="button" class="pill ghost sm" data-act="block" data-id="${m.sender_id}">Blokker</button>` : ''}</span>` : ''}</li>`;
     });
     html += '</ol>';
     if (!msgs.length) html += `<p class="empty">${thread === 'alle' ? 'Ingen beskjeder til alle ennå.' : 'Ingen meldinger ennå. Si hei!'}</p>`;
-    if (thread === 'alle' && !isAnyCoord()) {
+    if (isBlocked) {
+      html += `<div class="composer readonly"><p class="small">Du har blokkert ${esc(threadName(thread))}. Dere kan ikke sende meldinger til hverandre.</p>
+        <button type="button" class="pill ghost sm self-start" data-act="unblock" data-id="${thread}">Opphev blokkering</button></div>`;
+    } else if (thread === 'alle' && !isAnyCoord()) {
       html += `<div class="composer readonly"><p class="small">Bare koordinatorene kan skrive her. Vil du svare, send en melding til én koordinator.</p>
         <a class="pill sm self-start" href="#/chat/ny">Skriv til en koordinator</a></div>`;
     } else {
@@ -1583,6 +1636,35 @@
       }, 'Kartet er lagret for alle.');
     },
     'choose-team'(el) { run(async () => { await api.setTeam(S.user.id, el.dataset.id); await reloadTeamsAndProfiles(); S.viewTeam = myTeamId(); S.lastRoute = null; }, 'Velkommen i laget!'); },
+    'thread-menu'() { S.threadMenu = !S.threadMenu; render(); },
+    'msg-menu'(el) { S.msgMenu = S.msgMenu === el.dataset.id ? null : el.dataset.id; render(); },
+    'block'(el) {
+      const p = S.profiles[el.dataset.id] || {};
+      if (!confirm(`Blokkere ${p.full_name || 'denne personen'}? Dere kan ikke sende meldinger til hverandre, og du ser ikke meldingene fra dem. Du kan oppheve det senere.`)) return;
+      run(async () => { await api.block(el.dataset.id); S.blocked.add(el.dataset.id); S.threadMenu = false; S.msgMenu = null; }, 'Blokkert.');
+    },
+    'unblock'(el) { run(async () => { await api.unblock(el.dataset.id); S.blocked.delete(el.dataset.id); S.threadMenu = false; }, 'Blokkeringen er opphevet.'); },
+    'report-msg'(el) {
+      const m = S.messages.find((x) => x.id === el.dataset.id); if (!m) return;
+      const reason = prompt('Hvorfor rapporterer du meldingen? (valgfritt)\nAdministrator ser rapporten og meldingen.');
+      if (reason === null) return;
+      run(async () => { await api.reportContent({ message_id: m.id, reported_user: m.sender_id, message_text: m.body.slice(0, 1000), reason: reason.slice(0, 500) }); S.msgMenu = null; }, 'Takk. Meldingen er rapportert til administrator.');
+    },
+    'report-user'(el) {
+      const reason = prompt('Hva vil du rapportere? Administrator ser rapporten.');
+      if (reason === null) return;
+      run(async () => { await api.reportContent({ reported_user: el.dataset.id, reason: reason.slice(0, 500) }); S.threadMenu = false; }, 'Takk. Rapporten er sendt til administrator.');
+    },
+    'creport-done'(el) { run(async () => { await api.resolveReport(el.dataset.id); S.creports = S.creports.filter((r) => r.id !== el.dataset.id); }, 'Merket som behandlet.'); },
+    'creport-delete'(el) {
+      if (!confirm('Slette meldingen for alle?')) return;
+      run(async () => { await api.deleteMessage(el.dataset.msg); await api.resolveReport(el.dataset.id); S.creports = S.creports.filter((r) => r.id !== el.dataset.id); S.messages = S.messages.filter((m) => m.id !== el.dataset.msg); }, 'Meldingen er slettet.');
+    },
+    'delete-account'() {
+      if (!confirm('Slette kontoen din for godt? Profilen, vaktene og meldingene dine blir borte, og det kan ikke angres.')) return;
+      if (!confirm('Er du helt sikker?')) return;
+      run(async () => { await pushOff(true); await api.deleteAccount(); }, 'Kontoen din er slettet.');
+    },
     'shift-edit'() { const c = currentShifts(); S.shiftDraft = { slots: c.slots.map((x) => Object.assign({ key: slotKey() }, x)), min: c.min, days: c.days.slice() }; render(); const f = $('[id^="sl-name-"]'); if (f) f.focus(); },
     'shift-cancel'() { S.shiftDraft = null; render(); },
     'slot-add'() {
@@ -1802,6 +1884,7 @@
   window.addEventListener('hashchange', () => {
     S.navigated = true;
     const r = route();
+    if (r === 'kontor' && S.loaded && isAdmin()) api.contentReports().then((x) => { S.creports = x || []; if (route() === 'kontor') render(); }).catch(() => {});
     if (r !== 'nodhjelp') S.backRoute = '#/' + r;
     render();
   });

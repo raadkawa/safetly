@@ -6,6 +6,7 @@
 //   { type: 'message', id }           -> ny melding (til én eller «Til alle»)
 //   { type: 'news', id }              -> ny nyhet fra koordinator
 //   { type: 'cron' }                  -> kjøres hvert 10. min: påminnelse før vakt og «mangler folk» kl. 17
+//   { type: 'delete-account' }        -> sletter kontoen til den som er logget inn (krav fra Apple og Google)
 //
 // Installeres med:  supabase functions deploy push --no-verify-jwt
 // (Tjenesten sjekker selv hvem som kaller den der det betyr noe.)
@@ -119,6 +120,8 @@ async function onMessage(sb: ReturnType<typeof admin>, user: { id: string }, id:
   const { data: from } = await sb.from('profiles').select('full_name').eq('id', m.sender_id).maybeSingle();
   const name = shortName(from?.full_name || '');
   if (m.recipient_id) {
+    const blk = await sb.from('blocks').select('user_id').eq('user_id', m.recipient_id).eq('blocked_id', m.sender_id).maybeSingle();
+    if (blk.data) return { sent: 0 };
     return { sent: await send(sb, [m.recipient_id], 'meldinger', { title: `Melding fra ${name}`, body: clip(m.body, 140), url: `#/chat/${m.sender_id}`, tag: 'chat-' + m.sender_id }) };
   }
   const { data: all } = await sb.from('profiles').select('id');
@@ -134,6 +137,18 @@ async function onNews(sb: ReturnType<typeof admin>, user: { id: string }, id: st
   const ids = (all || []).filter((p) => !n.team_id || p.team_id === n.team_id).map((p) => p.id).filter((x) => x !== n.author_id);
   return { sent: await send(sb, ids, 'nyheter', { title: 'Ukas nyheter', body: clip(n.title, 140), url: '#/nyheter', tag: 'nyheter' }) };
 }
+async function deleteAccount(sb: ReturnType<typeof admin>, user: { id: string }) {
+  const { data: me } = await sb.from('profiles').select('*').eq('id', user.id).maybeSingle();
+  if (me && me.is_admin) {
+    const { count: admins } = await sb.from('profiles').select('id', { count: 'exact', head: true }).eq('is_admin', true);
+    const { count: all } = await sb.from('profiles').select('id', { count: 'exact', head: true });
+    if ((admins ?? 0) <= 1 && (all ?? 0) > 1) return { error: 'Du er eneste administrator. Gjør en annen til administrator før du sletter kontoen.' };
+  }
+  const { error } = await sb.auth.admin.deleteUser(user.id); // profil, vakter, meldinger osv. slettes med kontoen
+  if (error) return { error: error.message };
+  return { deleted: true };
+}
+
 async function onCron(sb: ReturnType<typeof admin>, now = new Date()) {
   // Hvert lag har egne vakttider og oppmøtested. Uten lag (eldre database) brukes settings.
   const { data: st } = await sb.from('settings').select('*').eq('id', 1).maybeSingle();
@@ -206,6 +221,7 @@ if (import.meta.main) {
       if (body.type === 'cron') return json(await onCron(sb));
       const user = await caller(sb, req);
       if (!user) return json({ error: 'Ikke logget inn' }, 401);
+      if (body.type === 'delete-account') return json(await deleteAccount(sb, user));
       if (body.type === 'test') return json({ sent: await send(sb, [user.id], null, { title: 'Safetly', body: 'Varsler virker på denne telefonen. 👍', url: '#/info', tag: 'test' }) });
       if (body.type === 'message' && typeof body.id === 'string') return json(await onMessage(sb, user, body.id));
       if (body.type === 'news' && typeof body.id === 'string') return json(await onNews(sb, user, body.id));
